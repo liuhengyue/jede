@@ -1,0 +1,17 @@
+_BASE_: "pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "./output/pg_rcnn/ablations/num_proposals_100/test_video_0/model_final.pth"
+  ROI_DIGIT_HEAD:
+    NUM_PROPOSAL: 1
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+INPUT:
+  CROP:
+    ENABLED: False
+    SIZE: [0.5, 0.9]
+SOLVER:
+  IMS_PER_BATCH: 8
+DATALOADER:
+  NUM_WORKERS: 4
+OUTPUT_DIR: ./output/pg_rcnn/ablations/num_proposals_1/test_video_0/

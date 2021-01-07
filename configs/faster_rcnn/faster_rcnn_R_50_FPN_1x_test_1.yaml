@@ -1,0 +1,31 @@
+_BASE_: "../../../../configs/Base-RCNN-FPN.yaml"
+MODEL:
+  WEIGHTS: ../../model_final_280758.pkl
+  MASK_ON: False
+  RESNETS:
+    DEPTH: 50
+  ROI_HEADS:
+    NUM_CLASSES: 10
+  ANCHOR_GENERATOR:
+    ASPECT_RATIOS: [[0.5, 1.0, 2.0]] # aspect_ratio = h / w
+DATASETS:
+  TRAIN: ("jerseynumbers_train",)
+  TEST: ("jerseynumbers_val",)
+  DIGIT_ONLY: True
+  TRAIN_VIDEO_IDS: [0,2,3]
+  TEST_VIDEO_IDS: [1]
+DATALOADER:
+  NUM_WORKERS: 4
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.01 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (25000, 40000)
+  MAX_ITER: 50000
+OUTPUT_DIR: ./output/faster_rcnn/test_video_1/
+INPUT:
+  MIN_SIZE_TEST: 600
+TEST:
+  AUG:
+    ENABLED: False
+    FLIP: False
+    MIN_SIZES: (2600, 2800)

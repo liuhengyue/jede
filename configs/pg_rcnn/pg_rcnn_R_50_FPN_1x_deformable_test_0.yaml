@@ -1,0 +1,30 @@
+_BASE_: "pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: ./output/pg_rcnn/deformable_head/test_video_0/model_final.pth
+  ROI_DIGIT_HEAD:
+    DEFORMABLE: True
+  RPN:
+    PRE_NMS_TOPK_TRAIN: 500  # Per FPN level
+    PRE_NMS_TOPK_TEST: 250  # Per FPN level
+    # Detectron1 uses 2000 proposals per-batch,
+    # (See "modeling/rpn/rpn_outputs.py" for details of this legacy issue)
+    # which is approximately 1000 proposals per-image since the default batch size for FPN is 2.
+    POST_NMS_TOPK_TRAIN: 250
+    POST_NMS_TOPK_TEST: 250
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+INPUT:
+  CROP:
+    ENABLED: False
+    SIZE: [0.5, 0.9]
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (20000, )
+  MAX_ITER: 30000
+  WARMUP_FACTOR: 0.005
+  WARMUP_ITERS: 200
+DATALOADER:
+  NUM_WORKERS: 4
+OUTPUT_DIR: ./output/pg_rcnn/deformable_head/test_video_0/

@@ -1,0 +1,37 @@
+_BASE_: "pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "model_final_a6e10b.pkl"
+  ANCHOR_GENERATOR:
+    SIZES: [[128, 256, 512]]
+  RPN:
+    IN_FEATURES: ["p4", "p5", "p6"]
+    PRE_NMS_TOPK_TRAIN: 500  # Per FPN level
+    PRE_NMS_TOPK_TEST: 250  # Per FPN level
+    # Detectron1 uses 2000 proposals per-batch,
+    # (See "modeling/rpn/rpn_outputs.py" for details of this legacy issue)
+    # which is approximately 1000 proposals per-image since the default batch size for FPN is 2.
+    POST_NMS_TOPK_TRAIN: 250
+    POST_NMS_TOPK_TEST: 250
+DATASETS:
+  TRAIN_VIDEO_IDS: [0,2,3]
+  TEST_VIDEO_IDS: [1]
+INPUT:
+#  MIN_SIZE_TRAIN: (160, 200)
+#  MIN_SIZE_TRAIN: (320, 336, 352, 368, 384, 400)
+#  MIN_SIZE_TRAIN: (120, 184, 248, 312, 376, 440)
+#  MAX_SIZE_TRAIN: 1111
+  CROP:
+    ENABLED: False
+    SIZE: [0.5, 0.9]
+  AUG:
+    GRAYSCALE: True
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.01 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (20000, 40000)
+  MAX_ITER: 50000
+  WARMUP_FACTOR: 0.0005
+  WARMUP_ITERS: 2000
+DATALOADER:
+  NUM_WORKERS: 4
+OUTPUT_DIR: ./output/pg_rcnn/grayscale/test_video_1/
