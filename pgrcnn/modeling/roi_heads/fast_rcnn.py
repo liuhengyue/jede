@@ -223,13 +223,13 @@ class FastRCNNOutputs:
         bg_class_ind = self.pred_class_logits.shape[1] - 1
 
         fg_inds = (self.gt_classes >= 0) & (self.gt_classes < bg_class_ind)
-        num_fg = fg_inds.nonzero().numel()
+        num_fg = torch.nonzero(fg_inds).numel()
         fg_gt_classes = self.gt_classes[fg_inds]
         fg_pred_classes = pred_classes[fg_inds]
 
-        num_false_negative = (fg_pred_classes == bg_class_ind).nonzero().numel()
-        num_accurate = (pred_classes == self.gt_classes).nonzero().numel()
-        fg_num_accurate = (fg_pred_classes == fg_gt_classes).nonzero().numel()
+        num_false_negative = torch.nonzero(fg_pred_classes == bg_class_ind).numel()
+        num_accurate = torch.nonzero(pred_classes == self.gt_classes).numel()
+        fg_num_accurate = torch.nonzero(fg_pred_classes == fg_gt_classes).numel()
 
         storage = get_event_storage()
         if num_instances > 0:

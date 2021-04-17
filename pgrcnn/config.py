@@ -27,7 +27,8 @@ def add_poseguide_config(cfg):
 
     _C.MODEL.ROI_DIGIT_HEAD = CfgNode(new_allowed=True)
     cfg.MODEL.ROI_DIGIT_HEAD.NUM_DIGITS = 10
-
+    # input
+    cfg.INPUT.RANDOM_FLIP = "none" # we do not flip since it does not make sense to flip a digit
     # augmentation
     _C.INPUT.AUG = CfgNode(new_allowed=True)
     cfg.INPUT.AUG.COLOR = False

@@ -5,10 +5,10 @@ import torch
 from fvcore.common.file_io import PathManager
 from PIL import Image
 
-# from detectron2.data import detection_utils as utils
+from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from detectron2.data.dataset_mapper import DatasetMapper
-from pgrcnn.data import det_utils as utils
+from pgrcnn.data import det_utils
 
 """
 This file contains the default mapping that's applied to "dataset dicts".
@@ -40,7 +40,7 @@ class CustomDatasetMapper(DatasetMapper):
         else:
             self.crop_gen = None
 
-        self.tfm_gens = utils.build_transform_gen(cfg, is_train)
+        self.tfm_gens = det_utils.build_augmentation(cfg, is_train)
 
         # fmt: off
         self.img_format     = cfg.INPUT.FORMAT
@@ -131,13 +131,13 @@ class CustomDatasetMapper(DatasetMapper):
 
             # USER: Implement additional transformations if you have other types of data
             annos = [
-                utils.transform_instance_annotations(
+                det_utils.transform_instance_annotations(
                     obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
                 )
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0
             ]
-            instances = utils.annotations_to_instances(
+            instances = det_utils.annotations_to_instances(
                 annos, image_shape, mask_format=self.mask_format, digit_only=self.digit_only
             )
             # Create a tight bounding box from masks, useful when image is cropped

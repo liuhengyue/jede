@@ -23,116 +23,6 @@ from pgrcnn.data import custom_transform_gen as custom_T
 # each person will only have at most 2 digits which we pad to
 MAX_DIGIT_PER_INSTANCE = 2
 
-class SizeMismatchError(ValueError):
-    """
-    When loaded image has difference width/height compared with annotation.
-    """
-
-
-def read_image(file_name, format=None):
-    """
-    Read an image into the given format.
-    Will apply rotation and flipping if the image has such exif information.
-
-    Args:
-        file_name (str): image file path
-        format (str): one of the supported image modes in PIL, or "BGR"
-
-    Returns:
-        image (np.ndarray): an HWC image
-    """
-    with PathManager.open(file_name, "rb") as f:
-        image = Image.open(f)
-
-        # capture and ignore this bug: https://github.com/python-pillow/Pillow/issues/3973
-        try:
-            image = ImageOps.exif_transpose(image)
-        except Exception:
-            pass
-
-        if format is not None:
-            # PIL only supports RGB, so convert to RGB and flip channels over below
-            conversion_format = format
-            if format == "BGR":
-                conversion_format = "RGB"
-            image = image.convert(conversion_format)
-        image = np.asarray(image)
-        if format == "BGR":
-            # flip channels if needed
-            image = image[:, :, ::-1]
-        # PIL squeezes out the channel dimension for "L", so make it HWC
-        if format == "L":
-            image = np.expand_dims(image, -1)
-        return image
-
-
-def check_image_size(dataset_dict, image):
-    """
-    Raise an error if the image does not match the size specified in the dict.
-    """
-    if "width" in dataset_dict or "height" in dataset_dict:
-        image_wh = (image.shape[1], image.shape[0])
-        expected_wh = (dataset_dict["width"], dataset_dict["height"])
-        if not image_wh == expected_wh:
-            raise SizeMismatchError(
-                "Mismatched (W,H){}, got {}, expect {}".format(
-                    " for image " + dataset_dict["file_name"]
-                    if "file_name" in dataset_dict
-                    else "",
-                    image_wh,
-                    expected_wh,
-                )
-            )
-
-    # To ensure bbox always remap to original image size
-    if "width" not in dataset_dict:
-        dataset_dict["width"] = image.shape[1]
-    if "height" not in dataset_dict:
-        dataset_dict["height"] = image.shape[0]
-
-
-def transform_proposals(dataset_dict, image_shape, transforms, min_box_side_len, proposal_topk):
-    """
-    Apply transformations to the proposals in dataset_dict, if any.
-
-    Args:
-        dataset_dict (dict): a dict read from the dataset, possibly
-            contains fields "proposal_boxes", "proposal_objectness_logits", "proposal_bbox_mode"
-        image_shape (tuple): height, width
-        transforms (TransformList):
-        min_box_side_len (int): keep proposals with at least this size
-        proposal_topk (int): only keep top-K scoring proposals
-
-    The input dict is modified in-place, with abovementioned keys removed. A new
-    key "proposals" will be added. Its value is an `Instances`
-    object which contains the transformed proposals in its field
-    "proposal_boxes" and "objectness_logits".
-    """
-    if "proposal_boxes" in dataset_dict:
-        # Transform proposal boxes
-        boxes = transforms.apply_box(
-            BoxMode.convert(
-                dataset_dict.pop("proposal_boxes"),
-                dataset_dict.pop("proposal_bbox_mode"),
-                BoxMode.XYXY_ABS,
-            )
-        )
-        boxes = Boxes(boxes)
-        objectness_logits = torch.as_tensor(
-            dataset_dict.pop("proposal_objectness_logits").astype("float32")
-        )
-
-        boxes.clip(image_shape)
-        keep = boxes.nonempty(threshold=min_box_side_len)
-        boxes = boxes[keep]
-        objectness_logits = objectness_logits[keep]
-
-        proposals = Instances(image_shape)
-        proposals.proposal_boxes = boxes[:proposal_topk]
-        proposals.objectness_logits = objectness_logits[:proposal_topk]
-        dataset_dict["proposals"] = proposals
-
-
 def transform_instance_annotations(
     annotation, transforms, image_size, *, keypoint_hflip_indices=None, pad=True
 ):
@@ -484,28 +374,6 @@ def filter_empty_instances(instances, by_box=True, by_mask=True):
     return instances[m]
 
 
-def create_keypoint_hflip_indices(dataset_names):
-    """
-    Args:
-        dataset_names (list[str]): list of dataset names
-    Returns:
-        ndarray[int]: a vector of size=#keypoints, storing the
-        horizontally-flipped keypoint indices.
-    """
-
-    check_metadata_consistency("keypoint_names", dataset_names)
-    check_metadata_consistency("keypoint_flip_map", dataset_names)
-
-    meta = MetadataCatalog.get(dataset_names[0])
-    names = meta.keypoint_names
-    # TODO flip -> hflip
-    flip_map = dict(meta.keypoint_flip_map)
-    flip_map.update({v: k for k, v in flip_map.items()})
-    flipped_names = [i if i not in flip_map else flip_map[i] for i in names]
-    flip_indices = [names.index(i) for i in flipped_names]
-    return np.asarray(flip_indices)
-
-
 def gen_crop_transform_with_instance(crop_size, image_size, instance):
     """
     Generate a CropTransform so that the cropping region contains
@@ -559,7 +427,7 @@ def check_metadata_consistency(key, dataset_names):
             raise ValueError("Datasets have different metadata '{}'!".format(key))
 
 
-def build_transform_gen(cfg, is_train):
+def build_augmentation(cfg, is_train):
     """
     Create a list of :class:`TransformGen` from config.
     Now it includes resizing and flipping.
@@ -585,10 +453,10 @@ def build_transform_gen(cfg, is_train):
     # tfm_gens.append(T.RandomExtent((1, 5), (0.9, 0.9)))
     tfm_gens.append(T.ResizeShortestEdge(min_size, max_size, sample_style))
     # tfm_gens.append(T.RandomBrightness(0.2, 1.8))
+    assert cfg.INPUT.RANDOM_FLIP == "none", "For jersey number, it does not make sense to do flipping."
     if cfg.INPUT.AUG.GRAYSCALE:
         tfm_gens.append(custom_T.ConvertGrayscale())
     if is_train:
-        # tfm_gens.append(T.RandomFlip())
         if cfg.INPUT.AUG.COLOR:
             # tfm_gens.append(T.RandomLighting(scale=10.0))
             tfm_gens.append(T.RandomBrightness(0.5, 1.5))
