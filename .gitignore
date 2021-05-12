@@ -48,24 +48,17 @@ _darcs
 
 # project dirs
 /detectron2/model_zoo/configs
-<<<<<<< HEAD
-#/datasets/coco/
-#/projects/*/datasets
-!datasets/
-datasets/*
-!datasets/jnw/
-datasets/jnw/*
-!/datasets/jnw/annotations/
-/models
 
+# if include the annotations
+#!datasets/
+#datasets/*
+#!datasets/jnw/
+#datasets/jnw/*
+#!/datasets/jnw/annotations/
+#/models
+# or ignore all
+datasets
 
 # pycharm plugins
 node_modules/
 package-lock.json
-=======
-/datasets/*
-!/datasets/*.*
-/projects/*/datasets
-/models
-/snippet
->>>>>>> master

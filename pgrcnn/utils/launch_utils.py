@@ -1,9 +1,9 @@
-import os
+import os, sys
 import platform
 import logging
 import copy
 from collections import OrderedDict
-from pgrcnn.config import get_cfg
+from detectron2.config import get_cfg
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
 from detectron2.utils.logger import setup_logger
 import detectron2.utils.comm as comm
@@ -14,9 +14,10 @@ from detectron2.evaluation import DatasetEvaluators
 from pgrcnn.data.jerseynumbers import register_jerseynumbers
 from detectron2.modeling import DatasetMapperTTA
 from detectron2.modeling import GeneralizedRCNNWithTTA
-from projects.TridentNet.tridentnet import add_tridentnet_config
+from pgrcnn.config.config import add_poseguide_config, add_tridentnet_config
 def setup(args):
     cfg = get_cfg() # with added extra fields
+    add_poseguide_config(cfg)
     add_tridentnet_config(cfg) # add config for tridentnet
     cfg.merge_from_file(args.config_file)
     # for mac os, change config to cpu
