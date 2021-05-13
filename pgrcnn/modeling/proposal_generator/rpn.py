@@ -6,7 +6,7 @@ from torch import nn
 
 from detectron2.layers import ShapeSpec
 from detectron2.structures import Boxes, pairwise_iou
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 from detectron2.utils.memory import retry_if_cuda_oom
 from detectron2.utils.registry import Registry
 

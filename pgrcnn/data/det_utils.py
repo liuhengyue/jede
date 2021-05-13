@@ -6,6 +6,7 @@ from fvcore.common.file_io import PathManager
 from PIL import Image, ImageOps
 
 from detectron2.structures import (
+    Instances,
     BitMasks,
     Boxes,
     BoxMode,
@@ -14,7 +15,7 @@ from detectron2.structures import (
     RotatedBoxes,
     polygons_to_bitmask,
 )
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players
 from pgrcnn.structures.digitboxes import DigitBoxes
 from detectron2.data import transforms as T
 from detectron2.data.catalog import MetadataCatalog
@@ -24,7 +25,10 @@ from pgrcnn.data import custom_transform_gen as custom_T
 MAX_DIGIT_PER_INSTANCE = 2
 
 def transform_instance_annotations(
-    annotation, transforms, image_size, *, keypoint_hflip_indices=None, pad=True
+        annotation, transforms, image_size, *,
+        keypoint_hflip_indices=None,
+        num_interests=3,
+        pad_to_full=True
 ):
     """
     Apply transforms to box, segmentation and keypoints annotations of a single instance.
@@ -34,11 +38,17 @@ def transform_instance_annotations(
     If you need anything more specially designed for each data structure,
     you'll need to implement your own version of this function or the transforms.
 
-    Also, apply padding here
-
     Args:
         annotation (dict): dict of instance annotations for a single instance.
-            It will be modified in-place.
+            It will be modified in-place. It will only contain the annotation of a single player.
+            Suppose it has a n-digit jersey number, then the keys/vals of the dict:
+            ['digit_bboxes', list of lists [n, 4]
+            'keypoints', list of ints [4 x 3]
+            'person_bbox', list of ints [4]
+            'category_id', int [1]
+            'bbox_mode', XYXY_ABS
+            'digit_ids', list of ints [n,]
+            ]
         transforms (TransformList):
         image_size (tuple): the height, width of the transformed image
         keypoint_hflip_indices (ndarray[int]): see `create_keypoint_hflip_indices`.
@@ -60,61 +70,47 @@ def transform_instance_annotations(
     annotation["person_bbox"] = transforms.apply_box([bbox])[0]
     annotation["bbox_mode"] = BoxMode.XYXY_ABS
     bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
-    # Note that bbox is 1d (per-instance bounding box)
+    # (n, 4) if given an empty list, it will return (0, 4)
     bbox = transforms.apply_box(bbox)
-    if pad:
-        # pad to (2, 4)
-        pad_len = MAX_DIGIT_PER_INSTANCE - bbox.shape[0]
-        bbox = np.pad(bbox, [(0, pad_len), (0, 0)], 'constant', constant_values=(0))
 
-        # add center fields ((center, left, right), (x, y, vis=0))
-        digit_centers = np.zeros((3, 3))
-        digit_scales = np.zeros((3, 2))
+    num_digits = bbox.shape[0] # 0, 1, or 2
+    # we want to represent the digit_bboxes centers as keypoints of shape (num_interests x 3)
+    # no label - 0, visible - 2 as in COCO
+    # bboxes are also constructed into a fixed size of 3 bboxes for a person
+    digit_bboxes = np.zeros((num_interests, 4))
+    # construct a fixed keypoints array, in the order of center, left, right
+    digit_center_keypoints = np.zeros((num_interests, 3))
+    # should also do this for the scale (offsets)
+    digit_scales = np.zeros((num_interests, 3))
+    # digit ids
+    digit_ids = np.ones(3) * (-1)
+    # if num_digits == 1 - 0, 1, 2; if num_digits == 2 - 3 ~ 8
+    if num_digits > 0:
         digit_centers_x = (bbox[:, 0] + bbox[:, 2]) / 2
         digit_centers_y = (bbox[:, 1] + bbox[:, 3]) / 2
-        digit_centers_vis = 2 * ~ ((digit_centers_x == 0) & (digit_centers_y == 0))
         digit_scales_w = (bbox[:, 2] - bbox[:, 0])
         digit_scales_h = (bbox[:, 3] - bbox[:, 1])
-        tmp_digit_scales = np.stack((digit_scales_w, digit_scales_h), axis=1)
+        digit_centers_vis = np.ones(num_digits) * 2
         digit_centers_triplet = np.stack((digit_centers_x, digit_centers_y, digit_centers_vis), axis=1)
-        if pad_len > 0:
-            digit_centers[:2, :] = digit_centers_triplet
-            digit_scales[:2, :] = tmp_digit_scales
+        digit_scales_triplet = np.stack((digit_scales_w, digit_scales_h, digit_centers_vis), axis=1)
+        # one digit case
+        if num_digits == 1:
+            digit_bboxes[0, :] = bbox
+            digit_center_keypoints[:1, :] = digit_centers_triplet
+            digit_scales[:1, :] = digit_scales_triplet
+            digit_ids[0] = annotation["digit_ids"][0]
+        elif num_digits == 2:
+            digit_bboxes[1:, :] = bbox
+            digit_center_keypoints[1:, :] = digit_centers_triplet
+            digit_scales[1:, :] = digit_scales_triplet
+            digit_ids[1:] = np.array(annotation["digit_ids"])
         else:
-            digit_centers[1:, :] = digit_centers_triplet
-            digit_scales[1:, :] = tmp_digit_scales
+            raise NotImplementedError("currently not implemented.")
+    annotation["digit_bboxes"] = digit_bboxes
+    annotation["digit_centers"] = digit_center_keypoints
+    annotation["digit_scales"] = digit_scales
+    annotation["digit_ids"] = digit_ids
 
-        annotation["digit_bboxes"] = bbox
-        annotation["digit_centers"] = digit_centers
-        annotation["digit_scales"] = digit_scales
-        annotation["digit_ids"] = np.pad(annotation["digit_ids"], (0, MAX_DIGIT_PER_INSTANCE - len(annotation["digit_ids"])), 'constant', constant_values=(-1)).reshape((-1, 1))
-    else:
-        bbox = np.array(bbox, dtype=np.float32)
-        digit_centers_x = (bbox[:, 0] + bbox[:, 2]) / 2
-        digit_centers_y = (bbox[:, 1] + bbox[:, 3]) / 2
-        # add center fields ((center, left, right), (x, y, vis=0))
-        digit_centers = np.zeros((3, 3), dtype=np.float32)
-        digit_centers_vis = 2 * ~ ((digit_centers_x == 0) & (digit_centers_y == 0))
-        digit_centers_triplet = np.stack((digit_centers_x, digit_centers_y, digit_centers_vis), axis=1)
-        digit_scales_w = (bbox[:, 2] - bbox[:, 0])
-        digit_scales_h = (bbox[:, 3] - bbox[:, 1])
-        num_digit = bbox.shape[0]
-        annotation["digit_bboxes"] = bbox
-        annotation["digit_scales"] = np.stack((digit_scales_w, digit_scales_h), axis=1)
-        annotation["digit_ids"] = np.array(annotation["digit_ids"], dtype=np.int32)
-        if num_digit == 0:
-            digit_ct_classes = np.array([], dtype=np.int32)
-        elif num_digit == 1:
-            digit_ct_classes = np.array([0], dtype=np.int32)
-        else: # 2
-            # todo: check if it is in order of left and right
-            digit_ct_classes = np.array([1, 2], dtype=np.int32)
-        annotation["digit_ct_classes"] = digit_ct_classes
-        digit_centers[digit_ct_classes, :] = digit_centers_triplet
-        annotation["digit_centers"] = digit_centers
-
-    # reshape the category_id
-    # annotation["category_id"] = np.array(annotation["category_id"])#.reshape((-1,))
     if "segmentation" in annotation:
         # each instance contains 1 or more polygons
         segm = annotation["segmentation"]
@@ -136,14 +132,18 @@ def transform_instance_annotations(
                 "Supported types are: polygons as list[list[float] or ndarray],"
                 " COCO-style RLE as a dict.".format(type(segm))
             )
-
+    # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format
+    # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
+    # indice: "left_shoulder" 5, "right_shoulder", 6, "left_hip", 11 "right_hip", 12
+    num_keypoints = 17 if pad_to_full else 4
+    full_keypoints = np.zeros((num_keypoints, 3))
     if "keypoints" in annotation and len(annotation["keypoints"]) > 0:
         keypoints = transform_keypoint_annotations(
             annotation["keypoints"], transforms, image_size, keypoint_hflip_indices
         )
-    else:
-        keypoints = np.zeros((4, 3)) # pad with zeros, x=y=v=0
-    annotation["keypoints"] = keypoints
+        # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
+        full_keypoints[[5, 6, 12, 11], :] = keypoints
+    annotation["keypoints"] = full_keypoints
 
 
     return annotation
@@ -152,16 +152,26 @@ def transform_instance_annotations(
 def transform_keypoint_annotations(keypoints, transforms, image_size, keypoint_hflip_indices=None):
     """
     Transform keypoint annotations of an image.
+    If a keypoint is transformed out of image boundary, it will be marked "unlabeled" (visibility=0)
 
     Args:
-        keypoints (list[float]): Nx3 float in Detectron2 Dataset format.
+        keypoints (list[float]): Nx3 float in Detectron2's Dataset format.
+            Each point is represented by (x, y, visibility).
         transforms (TransformList):
         image_size (tuple): the height, width of the transformed image
         keypoint_hflip_indices (ndarray[int]): see `create_keypoint_hflip_indices`.
+            When `transforms` includes horizontal flip, will use the index
+            mapping to flip keypoints.
     """
     # (N*3,) -> (N, 3)
     keypoints = np.asarray(keypoints, dtype="float64").reshape(-1, 3)
-    keypoints[:, :2] = transforms.apply_coords(keypoints[:, :2])
+    keypoints_xy = transforms.apply_coords(keypoints[:, :2])
+
+    # Set all out-of-boundary points to "unlabeled"
+    inside = (keypoints_xy >= np.array([0, 0])) & (keypoints_xy <= np.array(image_size[::-1]))
+    inside = inside.all(axis=1)
+    keypoints[:, :2] = keypoints_xy
+    keypoints[:, 2][~inside] = 0
 
     # This assumes that HorizFlipTransform is the only one that does flip
     do_hflip = sum(isinstance(t, T.HFlipTransform) for t in transforms.transforms) % 2 == 1
@@ -174,11 +184,9 @@ def transform_keypoint_annotations(keypoints, transforms, image_size, keypoint_h
     # If flipped, swap each keypoint with its opposite-handed equivalent
     if do_hflip:
         assert keypoint_hflip_indices is not None
-        keypoints = keypoints[keypoint_hflip_indices, :]
+        keypoints = keypoints[np.asarray(keypoint_hflip_indices, dtype=np.int32), :]
 
-    # Maintain COCO convention that if visibility == 0, then x, y = 0
-    # TODO may need to reset visibility for cropped keypoints,
-    # but it does not matter for our existing algorithms
+    # Maintain COCO convention that if visibility == 0 (unlabeled), then x, y = 0
     keypoints[keypoints[:, 2] == 0] = 0
     return keypoints
 
@@ -224,9 +232,9 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
 
 
     """
-    target = Instances(image_size)
     if digit_only:
         if pad:
+            target = Instances(image_size)
             boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
             # remove padded boxes
             boxes = np.concatenate([box[np.any(box > 0, axis=1)] for box in boxes])
@@ -240,6 +248,7 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
         else:
             # todo: implement this
             pass
+    target = Players(image_size)
     # person bboxes
     boxes = [BoxMode.convert(obj["person_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
     boxes = target.gt_boxes = Boxes(boxes)

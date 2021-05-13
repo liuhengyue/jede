@@ -10,7 +10,7 @@ from detectron2.config import configurable
 from detectron2.layers import Linear, ShapeSpec, batched_nms, cat, nonzero_tuple
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.structures import Boxes
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 from detectron2.utils.events import get_event_storage
 
 __all__ = ["fast_rcnn_inference", "FastRCNNOutputLayers"]

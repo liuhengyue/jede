@@ -18,7 +18,7 @@ With customization to the Jersey Numbers in the Wild Dataset.
 __all__ = ["DatasetMapper"]
 
 
-class CustomDatasetMapper(DatasetMapper):
+class JerseyNumberDatasetMapper(DatasetMapper):
     """
     A callable which takes a dataset dict in Detectron2 Dataset format,
     and map it into a format used by the model.
@@ -43,12 +43,13 @@ class CustomDatasetMapper(DatasetMapper):
         self.tfm_gens = det_utils.build_augmentation(cfg, is_train)
 
         # fmt: off
-        self.img_format     = cfg.INPUT.FORMAT
-        self.mask_on        = cfg.MODEL.MASK_ON
-        self.mask_format    = cfg.INPUT.MASK_FORMAT
-        self.keypoint_on    = cfg.MODEL.KEYPOINT_ON
-        self.load_proposals = cfg.MODEL.LOAD_PROPOSALS
-        self.digit_only     = cfg.DATASETS.DIGIT_ONLY
+        self.img_format        = cfg.INPUT.FORMAT
+        self.mask_on           = cfg.MODEL.MASK_ON
+        self.mask_format       = cfg.INPUT.MASK_FORMAT
+        self.keypoint_on       = cfg.MODEL.KEYPOINT_ON
+        self.load_proposals    = cfg.MODEL.LOAD_PROPOSALS
+        self.digit_only        = cfg.DATASETS.DIGIT_ONLY
+        self.num_interests     = cfg.DATASETS.NUM_INTERESTS
         # fmt: on
         if self.keypoint_on and is_train:
             # Flip only makes sense in training
@@ -112,7 +113,9 @@ class CustomDatasetMapper(DatasetMapper):
         # USER: Remove if you don't use pre-computed proposals.
         if self.load_proposals:
             utils.transform_proposals(
-                dataset_dict, image_shape, transforms, self.min_box_side_len, self.proposal_topk
+                dataset_dict, image_shape, transforms,
+                proposal_topk=self.proposal_topk,
+                min_box_size=self.min_box_side_len
             )
 
         if not self.is_train:
@@ -132,7 +135,10 @@ class CustomDatasetMapper(DatasetMapper):
             # USER: Implement additional transformations if you have other types of data
             annos = [
                 det_utils.transform_instance_annotations(
-                    obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
+                    obj, transforms, image_shape,
+                    keypoint_hflip_indices=self.keypoint_hflip_indices,
+                    num_interests=self.num_interests,
+                    pad_to_full=True
                 )
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0

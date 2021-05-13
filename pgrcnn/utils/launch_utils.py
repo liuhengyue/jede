@@ -8,7 +8,7 @@ from detectron2.engine import DefaultTrainer, default_argument_parser, default_s
 from detectron2.utils.logger import setup_logger
 import detectron2.utils.comm as comm
 from pgrcnn.data.build import build_detection_test_loader, build_detection_train_loader
-from pgrcnn.data.custom_mapper import CustomDatasetMapper
+from pgrcnn.data.custom_mapper import JerseyNumberDatasetMapper
 from pgrcnn.evaluation.jerseynumber_evaluation import JerseyNumberEvaluator
 from detectron2.evaluation import DatasetEvaluators
 from pgrcnn.data.jerseynumbers import register_jerseynumbers
@@ -70,11 +70,11 @@ class Trainer(DefaultTrainer):
 
     @classmethod
     def build_test_loader(cls, cfg, dataset_name):
-        return build_detection_test_loader(cfg, dataset_name, mapper=CustomDatasetMapper(cfg, False))
+        return build_detection_test_loader(cfg, dataset_name, mapper=JerseyNumberDatasetMapper(cfg, False))
 
     @classmethod
     def build_train_loader(cls, cfg):
-        return build_detection_train_loader(cfg, mapper=CustomDatasetMapper(cfg, True))
+        return build_detection_train_loader(cfg, mapper=JerseyNumberDatasetMapper(cfg, True))
 
     @classmethod
     def test_with_TTA(cls, cfg, model):

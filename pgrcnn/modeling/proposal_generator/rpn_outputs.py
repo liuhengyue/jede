@@ -7,7 +7,7 @@ from fvcore.nn import smooth_l1_loss
 
 from detectron2.layers import batched_nms, cat
 from detectron2.structures import Boxes
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 from detectron2.utils.events import get_event_storage
 
 logger = logging.getLogger(__name__)

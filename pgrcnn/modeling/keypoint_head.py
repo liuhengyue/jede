@@ -10,7 +10,7 @@ from detectron2.utils.events import get_event_storage
 from detectron2.utils.registry import Registry
 from detectron2.modeling.roi_heads.keypoint_head import ROI_KEYPOINT_HEAD_REGISTRY
 from detectron2.modeling.roi_heads.keypoint_head import KRCNNConvDeconvUpsampleHead
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 
 
 _TOTAL_SKIPPED = 0

@@ -21,7 +21,7 @@ from detectron2.modeling.roi_heads.keypoint_head import build_keypoint_head
 from detectron2.modeling.roi_heads.mask_head import build_mask_head
 
 from pgrcnn.modeling.proposal_generator.proposal_utils import add_ground_truth_to_proposals
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 
 ROI_HEADS_REGISTRY = Registry("ROI_HEADS")
 ROI_HEADS_REGISTRY.__doc__ = """

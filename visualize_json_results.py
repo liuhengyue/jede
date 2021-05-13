@@ -13,7 +13,7 @@ from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import Boxes, BoxMode
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from pgrcnn.utils.launch_utils import setup
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 
 
 def create_instances(predictions, image_size):

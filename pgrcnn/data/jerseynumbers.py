@@ -20,14 +20,44 @@ CLASS_NAMES = [
     'person', '0', '1', '2', '3',
     '4', '5', '6', '7', '8', '9'
 ]
-
-KEYPOINT_NAMES = ["left_shoulder", "right_shoulder", "right_hip", "left_hip"] # follow the name in COCO
+# follow the name in COCO, if only use 4 keypoints
+# KEYPOINT_NAMES = ["left_shoulder", "right_shoulder", "right_hip", "left_hip"]
+# KEYPOINT_CONNECTION_RULES = [
+#     ("left_shoulder", "right_shoulder", (255, 32, 0)),
+#     ("right_shoulder", "right_hip", (255, 32, 0)),
+#     ("right_hip", "left_hip", (255, 32, 0)),
+#     ("left_hip", "left_shoulder", (255, 32, 0)),
+# ]
+KEYPOINT_NAMES = (
+    "nose",
+    "left_eye", "right_eye",
+    "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder",
+    "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist",
+    "left_hip", "right_hip",
+    "left_knee", "right_knee",
+    "left_ankle", "right_ankle",
+)
 
 KEYPOINT_CONNECTION_RULES = [
-    ("left_shoulder", "right_shoulder", (255, 32, 0)),
-    ("right_shoulder", "right_hip", (255, 32, 0)),
-    ("right_hip", "left_hip", (255, 32, 0)),
-    ("left_hip", "left_shoulder", (255, 32, 0)),
+    # face
+    ("left_ear", "left_eye", (102, 204, 255)),
+    ("right_ear", "right_eye", (51, 153, 255)),
+    ("left_eye", "nose", (102, 0, 204)),
+    ("nose", "right_eye", (51, 102, 255)),
+    # upper-body
+    ("left_shoulder", "right_shoulder", (255, 128, 0)),
+    ("left_shoulder", "left_elbow", (153, 255, 204)),
+    ("right_shoulder", "right_elbow", (128, 229, 255)),
+    ("left_elbow", "left_wrist", (153, 255, 153)),
+    ("right_elbow", "right_wrist", (102, 255, 224)),
+    # lower-body
+    ("left_hip", "right_hip", (255, 102, 0)),
+    ("left_hip", "left_knee", (255, 255, 77)),
+    ("right_hip", "right_knee", (153, 255, 204)),
+    ("left_knee", "left_ankle", (191, 255, 128)),
+    ("right_knee", "right_ankle", (255, 195, 77)),
 ]
 
 
@@ -43,15 +73,16 @@ assert os.path.exists(DATASET_ROOT), "Dataset jnw not found in {}".format(DATASE
 #   'digits_bboxes': output_digit_boxes, 'numbers': numbers, 'video_id': anno['file_attributes']['video_id']
 #   }]
 # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
-# Note: bbox annotation older is y1, x1, y2, x2, keypoints is x, y, v
-def _parse_bbox(old_bbox):
-    if not old_bbox:
-        return [0] * 4
-    return [old_bbox[1], old_bbox[0], old_bbox[3], old_bbox[2]]
-
+# bbox annotation older is XYXY_ABS, keypoints is x, y, v
 
 def get_dicts(data_dir, anno_dir, split=None, digit_only=False):
     """
+    Get annotations for specific split/video.
+    Note these fields could be an empty list:
+        "digit_bboxes": [],
+        "digit_labels": [],
+        "keypoints": [],
+
     data_dir: datasets/jnw/total
     anno_dir: datasets/jnw/annotations/jnw_annotations.json
     split:    list of video ids. Eg. [0, 1, 2, 3]

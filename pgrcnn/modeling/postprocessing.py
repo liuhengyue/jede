@@ -1,7 +1,7 @@
 from torch.nn import functional as F
 
 from detectron2.layers import paste_masks_in_image
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 
 def pgrcnn_postprocess(results, output_height, output_width, mask_threshold=0.5):
     """

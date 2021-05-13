@@ -11,7 +11,7 @@ from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.structures import Boxes
 from detectron2.utils.events import get_event_storage
 from pgrcnn.structures.digitboxes import DigitBoxes
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 
 __all__ = ["fast_rcnn_inference", "DigitOutputLayers"]
 

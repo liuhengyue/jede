@@ -21,7 +21,7 @@ from detectron2.data.common import AspectRatioGroupedDataset, DatasetFromList, M
 from detectron2.data.detection_utils import check_metadata_consistency
 from detectron2.data.build import get_detection_dataset_dicts, worker_init_reset_seed, trivial_batch_collator,\
 load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_images_with_few_keypoints
-from pgrcnn.data.custom_mapper import CustomDatasetMapper
+from pgrcnn.data.custom_mapper import JerseyNumberDatasetMapper
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
     A data loader is created by the following steps:
@@ -67,7 +67,7 @@ def build_sequential_dataloader(cfg, mapper=None, set="train"):
     dataset = DatasetFromList(dataset_dicts, copy=False)
 
     if mapper is None:
-        mapper = CustomDatasetMapper(cfg, True)
+        mapper = JerseyNumberDatasetMapper(cfg, True)
     dataset = MapDataset(dataset, mapper)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
@@ -142,7 +142,7 @@ def build_detection_train_loader(cfg, mapper=None):
     dataset = DatasetFromList(dataset_dicts, copy=False)
 
     if mapper is None:
-        mapper = CustomDatasetMapper(cfg, True)
+        mapper = JerseyNumberDatasetMapper(cfg, True)
     dataset = MapDataset(dataset, mapper)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
@@ -212,7 +212,7 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
 
     dataset = DatasetFromList(dataset_dicts)
     if mapper is None:
-        mapper = CustomDatasetMapper(cfg, False)
+        mapper = JerseyNumberDatasetMapper(cfg, False)
     dataset = MapDataset(dataset, mapper)
 
     sampler = samplers.InferenceSampler(len(dataset))

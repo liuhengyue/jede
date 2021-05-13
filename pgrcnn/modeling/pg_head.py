@@ -13,7 +13,7 @@ from pgrcnn.modeling.kpts2digit_head import build_digit_head
 from pgrcnn.utils.ctnet_utils import ctdet_decode
 from pgrcnn.structures.digitboxes import DigitBoxes
 from pgrcnn.modeling.digit_head import DigitOutputLayers
-from pgrcnn.structures.instances import CustomizedInstances as Instances
+from pgrcnn.structures.players import Players as Instances
 from pgrcnn.modeling.digit_head import paired_iou
 from pgrcnn.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY, StandardROIHeads
 from detectron2.modeling.sampling import subsample_labels

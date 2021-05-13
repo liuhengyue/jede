@@ -1,6 +1,6 @@
 import cv2
 from detectron2.engine import default_argument_parser
-from pgrcnn.data.custom_mapper import CustomDatasetMapper
+from pgrcnn.data.custom_mapper import JerseyNumberDatasetMapper
 from pgrcnn.data.build import build_detection_train_loader
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from detectron2.data import MetadataCatalog
@@ -20,6 +20,7 @@ def visualize_training(batched_inputs, cfg):
     """
 
     jnw_metadata = MetadataCatalog.get("jerseynumbers_train")
+    assert len(batched_inputs) == 1, "visualize_training() needs batch size of 1"
     for input in batched_inputs:
         img = input["image"].cpu().numpy()
         assert img.shape[0] == 3, "Images should have 3 channels."
@@ -30,10 +31,7 @@ def visualize_training(batched_inputs, cfg):
         # v_gt = v_gt.overlay_instances(boxes=input["instances"].gt_boxes)
         v_gt = v_gt.draw_dataloader_instances(input)
         vis_img = v_gt.get_image()
-        # vis_img = vis_img.transpose(2, 0, 1)
-        vis_name = " 1. GT bounding boxes"
-        cv2.imshow(vis_name, vis_img)
-        cv2.waitKey()
+        return input['file_name'], vis_img
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
@@ -41,11 +39,14 @@ if __name__ == "__main__":
     args.config_file = "configs/pg_rcnn/pg_rcnn_R_50_FPN_1x_extend_aug_test_0.yaml"
     # args.config_file = "../../configs/faster_rcnn_R_50_FPN_3x.yaml"
     cfg = setup(args)
-    dataloader = build_detection_train_loader(cfg, mapper=CustomDatasetMapper(cfg, True))
-    # data = next(iter(dataloader))
-    # print(data)
-    # visualize_training(data, cfg)
+    dataloader = build_detection_train_loader(cfg, mapper=JerseyNumberDatasetMapper(cfg, True))
 
+    show_data = True
     for data in dataloader:
-        # print(data)
-        visualize_training(data, cfg)
+        if show_data:
+            file_name, vis_img = visualize_training(data, cfg)
+            cv2.imshow(file_name, vis_img)
+            k = cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            if k == 27:
+                break

@@ -20,7 +20,7 @@ class DigitBoxes(Boxes):
 
         self.tensor = tensor
 
-    def to(self, device: str) -> "Boxes":
+    def to(self, device: str) -> "DigitBoxes":
         return DigitBoxes(self.tensor.to(device))
 
     def scale(self, scale_x: float, scale_y: float) -> None:

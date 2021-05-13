@@ -43,9 +43,12 @@ def add_poseguide_config(cfg):
 
     _C = cfg
 
+    # dataset configurations
     _C.DATASETS.DIGIT_ONLY = True
     _C.DATASETS.TRAIN_VIDEO_IDS = [0,1,3]
     _C.DATASETS.TEST_VIDEO_IDS =[2]
+    _C.DATASETS.NUM_INTERESTS = 3 # we have 3 potential digit locations (L, C, R), also we can have more
+    _C.DATASETS.NUM_KEYPOINTS = 4 # we only have annotations of 4 keypoints
 
     _C.MODEL.ROI_DIGIT_HEAD = CN()
     _C.MODEL.ROI_DIGIT_HEAD.NAME = "Kpts2DigitHead"

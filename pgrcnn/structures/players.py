@@ -4,7 +4,7 @@ import torch
 from detectron2.structures.instances import Instances
 from itertools import compress
 
-class CustomizedInstances(Instances):
+class Players(Instances):
     """
     This class represents a list of instances in an image.
     It stores the attributes of instances (e.g., boxes, masks, labels, scores) as "fields".
@@ -56,12 +56,12 @@ class CustomizedInstances(Instances):
 
     # Tensor-like methods
     # add support for list of tensors
-    def to(self, device: str) -> "CustomizedInstances":
+    def to(self, device: str) -> "Players":
         """
         Returns:
             Instances: all fields are called with a `to(device)`, if the field has this method.
         """
-        ret = CustomizedInstances(self._image_size)
+        ret = Players(self._image_size)
         for k, v in self._fields.items():
             if hasattr(v, "to"):
                 v = v.to(device)
@@ -70,7 +70,7 @@ class CustomizedInstances(Instances):
             ret.set(k, v)
         return ret
 
-    def __getitem__(self, item: Union[int, slice, torch.BoolTensor]) -> "CustomizedInstances":
+    def __getitem__(self, item: Union[int, slice, torch.BoolTensor]) -> "Players":
         """
         Args:
             item: an index-like object and will be used to index all the fields.
@@ -85,7 +85,7 @@ class CustomizedInstances(Instances):
             else:
                 item = slice(item, None, len(self))
 
-        ret = CustomizedInstances(self._image_size)
+        ret = Players(self._image_size)
         for k, v in self._fields.items():
             # item can be mask or index
             if type(v) == list:
@@ -101,7 +101,7 @@ class CustomizedInstances(Instances):
         return ret
 
     @staticmethod
-    def cat(instance_lists: List["CustomizedInstances"]) -> "CustomizedInstances":
+    def cat(instance_lists: List["Players"]) -> "Players":
         """
         Args:
             instance_lists (list[Instances])
@@ -110,7 +110,7 @@ class CustomizedInstances(Instances):
             Instances
             extended cat for other type like boxes and keypoints
         """
-        assert all(isinstance(i, CustomizedInstances) for i in instance_lists)
+        assert all(isinstance(i, Players) for i in instance_lists)
         assert len(instance_lists) > 0
         if len(instance_lists) == 1:
             return instance_lists[0]
@@ -118,7 +118,7 @@ class CustomizedInstances(Instances):
         image_size = instance_lists[0].image_size
         for i in instance_lists[1:]:
             assert i.image_size == image_size
-        ret = CustomizedInstances(image_size)
+        ret = Players(image_size)
         for k in instance_lists[0]._fields.keys():
             values = [i.get(k) for i in instance_lists]
             v0 = values[0]
