@@ -16,10 +16,10 @@ from detectron2.modeling.matcher import Matcher
 from detectron2.modeling.poolers import ROIPooler
 from detectron2.modeling.sampling import subsample_labels
 from detectron2.modeling.roi_heads.box_head import build_box_head
-from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from detectron2.modeling.roi_heads.keypoint_head import build_keypoint_head
 from detectron2.modeling.roi_heads.mask_head import build_mask_head
 
+from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from pgrcnn.modeling.proposal_generator.proposal_utils import add_ground_truth_to_proposals
 from pgrcnn.structures.players import Players as Instances
 
@@ -445,7 +445,7 @@ class Res5ROIHeads(ROIHeads):
         else:
             return instances
 
-
+# from detectron2
 @ROI_HEADS_REGISTRY.register()
 class StandardROIHeads(ROIHeads):
     """

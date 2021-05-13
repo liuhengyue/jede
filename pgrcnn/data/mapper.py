@@ -15,7 +15,7 @@ This file contains the default mapping that's applied to "dataset dicts".
 With customization to the Jersey Numbers in the Wild Dataset.
 """
 
-__all__ = ["DatasetMapper"]
+__all__ = ["JerseyNumberDatasetMapper"]
 
 
 class JerseyNumberDatasetMapper(DatasetMapper):
@@ -50,6 +50,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         self.load_proposals    = cfg.MODEL.LOAD_PROPOSALS
         self.digit_only        = cfg.DATASETS.DIGIT_ONLY
         self.num_interests     = cfg.DATASETS.NUM_INTERESTS
+        self.pad_to_full       = cfg.DATASETS.PAD_TO_FULL
         # fmt: on
         if self.keypoint_on and is_train:
             # Flip only makes sense in training
@@ -138,7 +139,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                     obj, transforms, image_shape,
                     keypoint_hflip_indices=self.keypoint_hflip_indices,
                     num_interests=self.num_interests,
-                    pad_to_full=True
+                    pad_to_full=self.pad_to_full
                 )
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0

@@ -21,7 +21,7 @@ from detectron2.utils.visualizer import Visualizer, ColorMode
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
 from detectron2.data import DatasetCatalog, MetadataCatalog
 
-from pgrcnn.data.custom_mapper import DatasetMapper
+from pgrcnn.data.mapper import DatasetMapper
 from pgrcnn.data.build import build_sequential_dataloader
 logger = logging.getLogger(__name__)
 

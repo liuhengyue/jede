@@ -21,7 +21,7 @@ from detectron2.data.common import AspectRatioGroupedDataset, DatasetFromList, M
 from detectron2.data.detection_utils import check_metadata_consistency
 from detectron2.data.build import get_detection_dataset_dicts, worker_init_reset_seed, trivial_batch_collator,\
 load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_images_with_few_keypoints
-from pgrcnn.data.custom_mapper import JerseyNumberDatasetMapper
+from pgrcnn.data.mapper import JerseyNumberDatasetMapper
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
     A data loader is created by the following steps:

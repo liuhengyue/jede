@@ -15,8 +15,9 @@ from pgrcnn.structures.digitboxes import DigitBoxes
 from pgrcnn.modeling.digit_head import DigitOutputLayers
 from pgrcnn.structures.players import Players as Instances
 from pgrcnn.modeling.digit_head import paired_iou
-from pgrcnn.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY, StandardROIHeads
+from pgrcnn.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY
 from detectron2.modeling.sampling import subsample_labels
+from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads
 from detectron2.structures.keypoints import Keypoints
 _TOTAL_SKIPPED = 0
 
@@ -103,9 +104,11 @@ class PGROIHeads(StandardROIHeads):
 
         self.digit_box_predictor = DigitOutputLayers(cfg, self.box_head.output_shape)
 
-
+        # digit head takes in the features, and keypoint heatmaps of K x 56 x 56, where K could be 4 or 17 depending on
+        K = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS if cfg.DATASETS.PAD_TO_FULL else cfg.DATASETS.NUM_KEYPOINTS
+        out_size = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION * 4
         self.digit_head = build_digit_head(
-            cfg, ShapeSpec(channels=4, height=56, width=56)
+            cfg, ShapeSpec(channels=K, height=out_size, width=out_size)
         )
 
     def _process_single_instance(self, detection, instance):
