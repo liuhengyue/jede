@@ -46,7 +46,7 @@ def _topk(scores, K=40):
 
     return topk_score, topk_inds, topk_clses, topk_ys, topk_xs
 
-def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_scale=True):
+def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_scale="feature"):
     batch, cat, height, width = heat.size()
 
     if batch == 0:
@@ -82,7 +82,10 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_sca
         wh = wh.gather(2, clses_ind).view(batch, K, 2)
     else:
         wh = wh.view(batch, K, 2)
-    if feature_scale:
+    if feature_scale == "ratio":
+        wh[..., 0:1] = wh[..., 0:1] * roi_widths
+        wh[..., 1:2] = wh[..., 1:2] * roi_heights
+    elif feature_scale == "feature":
         wh[..., 0:1] = (wh[..., 0:1] / width) * roi_widths
         wh[..., 1:2] = (wh[..., 1:2] / height) * roi_heights
     clses = clses.view(batch, K, 1).float()
@@ -166,7 +169,8 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer)
     proposal_boxes_h = proposal_boxes[:, 3] - proposal_boxes[:, 1]
     proposal_boxes_size = torch.stack((proposal_boxes_w, proposal_boxes_h), dim=1)
     # actual digit size = ratio * person bbox size
-    pred_scale_logits = pred_scale_logits / W * proposal_boxes_size
-    wh_loss = 0.1 * F.l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+    # pred_scale_logits = pred_scale_logits * proposal_boxes_size / W
+    scale_targets = W * scale_targets / proposal_boxes_size
+    wh_loss = F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
 
     return {'ct_loss': ct_loss, 'wh_loss': wh_loss}

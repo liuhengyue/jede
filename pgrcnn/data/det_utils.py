@@ -82,7 +82,7 @@ def transform_instance_annotations(
     # construct a fixed keypoints array, in the order of center, left, right
     digit_center_keypoints = np.zeros((num_interests, 3))
     # should also do this for the scale (offsets)
-    digit_scales = np.zeros((num_interests, 2))
+    digit_scales = np.zeros((num_interests, 2), dtype=np.float32)
     # digit ids
     digit_ids = np.ones(3) * (-1)
     # if num_digits == 1 - 0, 1, 2; if num_digits == 2 - 3 ~ 8
@@ -271,7 +271,7 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
         digit_centers = [obj["digit_centers"] for obj in annos]
         digit_scales = [obj["digit_scales"] for obj in annos]
         target.gt_digit_centers = Keypoints(digit_centers)
-        target.gt_digit_scales = torch.tensor(digit_scales, dtype=torch.float64)
+        target.gt_digit_scales = torch.tensor(digit_scales, dtype=torch.float32)
     else:
         boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
         boxes = target.gt_digit_boxes = [Boxes(box) for box in boxes]

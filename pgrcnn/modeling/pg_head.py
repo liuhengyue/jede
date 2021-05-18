@@ -84,8 +84,8 @@ class PGROIHeads(StandardROIHeads):
             # we want the prediction to be precise, such that
             # for a prediction from center heatmap, it generates a proposal
             # which is only 'focused' in the center. Label cross prediction as negative 0
-            non_valid = gt_ct_classes[matched_idxs] != detection_ct_classes
-            gt_classes[non_valid] = 0
+            # non_valid = gt_ct_classes[matched_idxs] != detection_ct_classes
+            # gt_classes[non_valid] = 0
 
 
         else:
@@ -302,7 +302,7 @@ class PGROIHeads(StandardROIHeads):
                 bboxes_flat = cat([b.proposal_boxes.tensor for b in instances], dim=0)
                 # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
-                                         K=self.num_ctdet_proposal, feature_scale=True)
+                                         K=self.num_ctdet_proposal, feature_scale="feature")
                 # todo: has duplicate boxes
                 len_instances = [len(instance) for instance in instances]
                 detections = list(detections.split(len_instances))
@@ -316,19 +316,20 @@ class PGROIHeads(StandardROIHeads):
             bboxes_flat = cat([b.pred_boxes.tensor for b in instances], dim=0)
             # (N, num of candidates, (x1, y1, x2, y2, score, center 0 /left 1/right 2)
             detection = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
-                                     K=self.num_ctdet_proposal, feature_scale=True)
+                                     K=self.num_ctdet_proposal, feature_scale="feature")
             detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))
             detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
             # assign new fields to instances
             for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
+                # could be empty list
                 instances[i].proposal_digit_boxes = [Boxes(b) for b in boxes]
                 instances[i].proposal_digit_ct_classes = [c for c in detection_ct_cls]
             return instances
 
     def _forward_digit_box(self, features, proposals):
         features = [features[f] for f in self.in_features]
-        # most likely have empty boxes
-        detection_boxes = [Boxes.cat(x.proposal_digit_boxes) for x in proposals]
+        # most likely have empty boxes, Boxes.cat([]) will return Boxes on cpu
+        detection_boxes = [Boxes.cat(x.proposal_digit_boxes).to(x.pred_boxes.device) for x in proposals]
         box_features = self.digit_box_pooler(features, detection_boxes)
         box_features = self.digit_box_head(box_features)
         predictions = self.digit_box_predictor(box_features)

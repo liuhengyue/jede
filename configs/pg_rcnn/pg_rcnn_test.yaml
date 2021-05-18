@@ -1,4 +1,7 @@
 _BASE_: "pg_rcnn_base.yaml"
+MODEL:
+  ROI_DIGIT_HEAD:
+    NUM_PROPOSAL: 10
 DATASETS:
   NUM_IMAGES: 1 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
@@ -7,9 +10,8 @@ INPUT:
   CROP:
     ENABLED: False
     SIZE: [0.5, 0.9]
-  MIN_SIZE_TRAIN: (640, )
 SOLVER:
-  IMS_PER_BATCH: 1
+  IMS_PER_BATCH: 2
   BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (600, )
   MAX_ITER: 1000
@@ -17,5 +19,5 @@ SOLVER:
   WARMUP_ITERS: 200
   CHECKPOINT_PERIOD: 500
 DATALOADER:
-  NUM_WORKERS: 1
+  NUM_WORKERS: 2
 OUTPUT_DIR: ./output/pg_rcnn/test/
