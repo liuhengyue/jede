@@ -47,7 +47,7 @@ class Players(Instances):
         and must agree with other existing fields in this object.
         """
         data_len = len(value)
-        if len(self._fields) and 'digit' not in name:
+        if len(self._fields):
             # we allow the instance to have different length
             assert (
                 len(self) == data_len

@@ -1,6 +1,9 @@
 import torch
 import torch.nn.functional as F
 
+from detectron2.layers import cat
+from detectron2.utils.events import get_event_storage
+
 def _nms(heat, kernel=3):
     pad = (kernel - 1) // 2
 
@@ -91,3 +94,79 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_sca
     detections = torch.cat([bboxes, scores, clses], dim=2)
 
     return detections
+
+def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer):
+    """
+    Wrap center and size loss here.
+    We treat the predicted centers as keypoints.
+    Arguments:
+        pred_keypoint_logits (Tensor): A tensor of shape (N, K, S, S) where N is the total number
+            of instances in the batch, K is the number of keypoints, and S is the side length
+            of the keypoint heatmap. The values are spatial logits.
+        instances (list[Instances]): A list of M Instances, where M is the batch size.
+            These instances are predictions from the model
+            that are in 1:1 correspondence with pred_keypoint_logits.
+            Each Instances should contain a `gt_keypoints` field containing a `structures.Keypoint`
+            instance.
+        normalizer (float): Normalize the loss by this amount.
+            If not specified, we normalize by the number of visible keypoints in the minibatch.
+
+    Returns a scalar tensor containing the loss.
+    """
+    heatmaps = []
+    valid = []
+    scale_targets = []
+    keypoint_side_len = pred_keypoint_logits.shape[2]
+    for instances_per_image in instances:
+        if len(instances_per_image) == 0:
+            continue
+        keypoints = instances_per_image.gt_digit_centers
+        heatmaps_per_image, valid_per_image = keypoints.to_heatmap(
+            instances_per_image.proposal_boxes.tensor, keypoint_side_len
+        )
+        heatmaps.append(heatmaps_per_image.view(-1))
+        valid.append(valid_per_image.view(-1))
+        scale_targets.append(instances_per_image.gt_digit_scales[valid_per_image == 1])
+
+    if len(heatmaps):
+        keypoint_targets = cat(heatmaps, dim=0)
+        valid = cat(valid, dim=0).to(dtype=torch.uint8)
+        valid = torch.nonzero(valid).squeeze(1)
+        scale_targets = cat(scale_targets, dim=0)
+
+    # torch.mean (in binary_cross_entropy_with_logits) doesn't
+    # accept empty tensors, so handle it separately
+    if len(heatmaps) == 0 or valid.numel() == 0:
+        global _TOTAL_SKIPPED
+        _TOTAL_SKIPPED += 1
+        storage = get_event_storage()
+        storage.put_scalar("kpts_num_skipped_batches", _TOTAL_SKIPPED, smoothing_hint=False)
+        return pred_keypoint_logits.sum() * 0
+
+    N, K, H, W = pred_keypoint_logits.shape
+    pred_keypoint_logits = pred_keypoint_logits.view(N * K, H * W)
+    keypoint_targets = keypoint_targets[valid]
+    ct_loss = F.cross_entropy(
+        pred_keypoint_logits[valid], keypoint_targets, reduction="sum"
+    )
+
+    # If a normalizer isn't specified, normalize by the number of visible keypoints in the minibatch
+    if normalizer is None:
+        normalizer = valid.numel()
+    ct_loss /= normalizer
+
+    # size loss
+    pred_scale_logits = pred_scale_logits.view(N, 2, H * W)
+    # (N, 2)
+    valid = valid // K # K-agnostic
+    pred_scale_logits = pred_scale_logits[valid // K, :, keypoint_targets]
+    # we predict the scale wrt. S
+    proposal_boxes = cat([x.proposal_boxes.tensor for x in instances], dim=0)[valid]
+    proposal_boxes_w = proposal_boxes[:, 2] - proposal_boxes[:, 0]
+    proposal_boxes_h = proposal_boxes[:, 3] - proposal_boxes[:, 1]
+    proposal_boxes_size = torch.stack((proposal_boxes_w, proposal_boxes_h), dim=1)
+    # actual digit size = ratio * person bbox size
+    pred_scale_logits = pred_scale_logits / W * proposal_boxes_size
+    wh_loss = 0.1 * F.l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+
+    return {'ct_loss': ct_loss, 'wh_loss': wh_loss}

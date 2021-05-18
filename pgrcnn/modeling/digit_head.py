@@ -1,12 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import logging
+from typing import Dict, List, Tuple, Union
 import torch
-from fvcore.nn import smooth_l1_loss
+from fvcore.nn import giou_loss, smooth_l1_loss
 from torch import nn
 from torch.nn import functional as F
 
 from detectron2.config import configurable
-from detectron2.layers import Linear, ShapeSpec, batched_nms, cat
+from detectron2.layers import Linear, ShapeSpec, batched_nms, cat, cross_entropy, nonzero_tuple
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.structures import Boxes
 from detectron2.utils.events import get_event_storage
@@ -43,6 +44,34 @@ Naming convention:
     gt_proposal_deltas: ground-truth box2box transform deltas
 """
 
+def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
+    """
+    Log the classification metrics to EventStorage.
+
+    Args:
+        pred_logits: Rx(K+1) logits. The last column is for background class.
+        gt_classes: R labels
+    """
+    num_instances = gt_classes.numel()
+    if num_instances == 0:
+        return
+    pred_classes = pred_logits.argmax(dim=1)
+    bg_class_ind = pred_logits.shape[1] - 1
+
+    fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind)
+    num_fg = fg_inds.nonzero().numel()
+    fg_gt_classes = gt_classes[fg_inds]
+    fg_pred_classes = pred_classes[fg_inds]
+
+    num_false_negative = (fg_pred_classes == bg_class_ind).nonzero().numel()
+    num_accurate = (pred_classes == gt_classes).nonzero().numel()
+    fg_num_accurate = (fg_pred_classes == fg_gt_classes).nonzero().numel()
+
+    storage = get_event_storage()
+    storage.put_scalar(f"{prefix}/cls_accuracy", num_accurate / num_instances)
+    if num_fg > 0:
+        storage.put_scalar(f"{prefix}/fg_cls_accuracy", fg_num_accurate / num_fg)
+        storage.put_scalar(f"{prefix}/false_negative", num_false_negative / num_fg)
 
 def fast_rcnn_inference(boxes, scores, num_instances, image_shapes, score_thresh, nms_thresh, topk_per_image):
     """
@@ -193,18 +222,18 @@ class FastRCNNOutputs(object):
         self.bg_class_ind = 0
 
         if len(proposals):
-            box_type = type(proposals[0].proposal_digit_boxes)
+            # we have a list of list of Boxes
+            self.proposals = Boxes.cat([Boxes.cat(p.proposal_digit_boxes) for p in proposals])
             # cat(..., dim=0) concatenates over all images in the batch
-            self.proposals = box_type.cat([p.proposal_digit_boxes for p in proposals])
             assert (
                 not self.proposals.tensor.requires_grad
             ), "Proposals should not require gradients!"
 
             # The following fields should exist only when training.
             if proposals[0].has("gt_digit_boxes"):
-                self.gt_boxes = box_type.cat([p.gt_digit_boxes for p in proposals])
+                self.gt_boxes = Boxes.cat([Boxes.cat(p.gt_digit_boxes) for p in proposals])
                 assert proposals[0].has("gt_digit_classes")
-                self.gt_classes = cat([p.gt_digit_classes for p in proposals], dim=0)
+                self.gt_classes = cat([cat(p.gt_digit_classes) for p in proposals], dim=0)
         else:
             self.proposals = Boxes(torch.zeros(0, 4, device=self.pred_proposal_deltas.device))
         self._no_instances = (len(proposals) == 0 or self.gt_classes.numel() == 0)  # no instances found
@@ -384,16 +413,19 @@ class DigitOutputLayers(nn.Module):
 
     @configurable
     def __init__(
-        self,
-        input_shape,
-        *,
-        box2box_transform,
-        num_classes,
-        cls_agnostic_bbox_reg=False,
-        smooth_l1_beta=0.0,
-        test_score_thresh=0.0,
-        test_nms_thresh=0.5,
-        test_topk_per_image=100,
+            self,
+            input_shape: ShapeSpec,
+            *,
+            box2box_transform,
+            num_classes: int,
+            test_score_thresh: float = 0.0,
+            test_nms_thresh: float = 0.5,
+            test_topk_per_image: int = 100,
+            cls_agnostic_bbox_reg: bool = False,
+            smooth_l1_beta: float = 0.0,
+            box_reg_loss_type: str = "smooth_l1",
+            loss_weight: Union[float, Dict[str, float]] = 1.0,
+            num_interests: int = 3
     ):
         """
         NOTE: this interface is experimental.
@@ -402,22 +434,28 @@ class DigitOutputLayers(nn.Module):
             input_shape (ShapeSpec): shape of the input feature to this module
             box2box_transform (Box2BoxTransform or Box2BoxTransformRotated):
             num_classes (int): number of foreground classes
-            cls_agnostic_bbox_reg (bool): whether to use class agnostic for bbox regression
-            smooth_l1_beta (float): transition point from L1 to L2 loss.
             test_score_thresh (float): threshold to filter predictions results.
             test_nms_thresh (float): NMS threshold for prediction results.
             test_topk_per_image (int): number of top predictions to produce per image.
+            cls_agnostic_bbox_reg (bool): whether to use class agnostic for bbox regression
+            smooth_l1_beta (float): transition point from L1 to L2 loss. Only used if
+                `box_reg_loss_type` is "smooth_l1"
+            box_reg_loss_type (str): Box regression loss type. One of: "smooth_l1", "giou"
+            loss_weight (float|dict): weights to use for losses. Can be single float for weighting
+                all losses, or a dict of individual weightings. Valid dict keys are:
+                    * "loss_cls": applied to classification loss
+                    * "loss_box_reg": applied to box regression loss
         """
         super().__init__()
-        if isinstance(input_shape, int):  # some backward compatbility
+        if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)
+        self.num_classes = num_classes
         input_size = input_shape.channels * (input_shape.width or 1) * (input_shape.height or 1)
-        # The prediction layer for num_classes foreground classes and one background class
-        # (hence + 1)
-        self.cls_score = Linear(input_size, num_classes + 1)
+        # prediction layer for num_classes foreground classes and one background class (hence + 1)
+        self.cls_score = nn.Linear(input_size, num_classes + 1)
         num_bbox_reg_classes = 1 if cls_agnostic_bbox_reg else num_classes
         box_dim = len(box2box_transform.weights)
-        self.bbox_pred = Linear(input_size, num_bbox_reg_classes * box_dim)
+        self.bbox_pred = nn.Linear(input_size, num_bbox_reg_classes * box_dim)
 
         nn.init.normal_(self.cls_score.weight, std=0.01)
         nn.init.normal_(self.bbox_pred.weight, std=0.001)
@@ -429,6 +467,13 @@ class DigitOutputLayers(nn.Module):
         self.test_score_thresh = test_score_thresh
         self.test_nms_thresh = test_nms_thresh
         self.test_topk_per_image = test_topk_per_image
+        self.box_reg_loss_type = box_reg_loss_type
+        if isinstance(loss_weight, float):
+            loss_weight = {"loss_cls": loss_weight, "loss_box_reg": loss_weight}
+        self.loss_weight = loss_weight
+        # we set the bg class as the first class, so the digit id is consistent
+        self.bg_class_ind = 0
+        self.num_interests = num_interests
 
     @classmethod
     def from_config(cls, cfg, input_shape):
@@ -436,12 +481,15 @@ class DigitOutputLayers(nn.Module):
             "input_shape": input_shape,
             "box2box_transform": Box2BoxTransform(weights=cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_WEIGHTS),
             # fmt: off
-            "num_classes"           : cfg.MODEL.ROI_DIGIT_HEAD.NUM_DIGITS,
-            "cls_agnostic_bbox_reg" : cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
-            "smooth_l1_beta"        : cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA,
-            "test_score_thresh"     : cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST,
-            "test_nms_thresh"       : cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST,
-            "test_topk_per_image"   : cfg.TEST.DETECTIONS_PER_IMAGE
+            "num_classes": cfg.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES, # this is the number of digits
+            "cls_agnostic_bbox_reg": cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
+            "smooth_l1_beta": cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA,
+            "test_score_thresh": cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST,
+            "test_nms_thresh": cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST,
+            "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
+            "box_reg_loss_type": cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_TYPE,
+            "loss_weight": {"loss_box_reg": cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_WEIGHT},
+            "num_interests": cfg.DATASETS.NUM_INTERESTS
             # fmt: on
         }
 
@@ -457,20 +505,101 @@ class DigitOutputLayers(nn.Module):
         proposal_deltas = self.bbox_pred(x)
         return scores, proposal_deltas
 
-    # TODO: move the implementation to this class.
     def losses(self, predictions, proposals):
         """
         Args:
             predictions: return values of :meth:`forward()`.
-            proposals (list[Instances]): proposals that match the features
-                that were used to compute predictions.
+            proposals (list[Instances]): proposals that match the features that were used
+                to compute predictions. The fields ``proposal_boxes``, ``gt_boxes``,
+                ``gt_classes`` are expected.
+
+        Returns:
+            Dict[str, Tensor]: dict of losses
         """
         scores, proposal_deltas = predictions
-        return FastRCNNOutputs(
-            self.box2box_transform, scores, proposal_deltas, proposals, self.smooth_l1_beta
-        ).losses()
 
-    def inference(self, predictions, proposals):
+        # parse classification outputs
+        gt_classes = (
+            cat([cat(p.gt_digit_classes, dim=0) for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        )
+        _log_classification_stats(scores, gt_classes)
+
+        # parse box regression outputs
+        if len(proposals):
+            proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor for p in proposals], dim=0)  # Nx4
+            assert not proposal_boxes.requires_grad, "Proposals should not require gradients!"
+            # If "gt_boxes" does not exist, the proposals must be all negative and
+            # should not be included in regression loss computation.
+            # Here we just use proposal_boxes as an arbitrary placeholder because its
+            # value won't be used in self.box_reg_loss().
+            gt_boxes = cat(
+                [(Boxes.cat(p.gt_digit_boxes) if p.has("gt_boxes") else Boxes.cat(p.proposal_digit_boxes)).tensor for p in proposals],
+                dim=0,
+            )
+        else:
+            proposal_boxes = gt_boxes = torch.empty((0, 4), device=proposal_deltas.device)
+
+        losses = {
+            "loss_digit_cls": cross_entropy(scores, gt_classes, reduction="mean"),
+            "loss_digit_box_reg": self.box_reg_loss(
+                proposal_boxes, gt_boxes, proposal_deltas, gt_classes
+            ),
+        }
+        return {k: v * self.loss_weight.get(k, 1.0) for k, v in losses.items()}
+
+    def box_reg_loss(self, proposal_boxes, gt_boxes, pred_deltas, gt_classes):
+        """
+        Args:
+            All boxes are tensors with the same shape Rx(4 or 5).
+            gt_classes is a long tensor of shape R, the gt class label of each proposal.
+            R shall be the number of proposals.
+        """
+        box_dim = proposal_boxes.shape[1]  # 4 or 5
+        # Regression loss is only computed for foreground proposals (those matched to a GT)
+        # Box delta loss is only computed between the prediction for the gt class k
+        # (if 0 <= k < bg_class_ind) and the target; there is no loss defined on predictions
+        # for non-gt classes and background.
+        # Empty fg_inds produces a valid loss of zero as long as the size_average
+        # arg to smooth_l1_loss is False (otherwise it uses torch.mean internally
+        # and would produce a nan loss).
+        # bg class is 0, so the fg inds is changed
+        fg_inds = nonzero_tuple(gt_classes >= self.bg_class_ind)[0]
+        if pred_deltas.shape[1] == box_dim:  # cls-agnostic regression
+            fg_pred_deltas = pred_deltas[fg_inds]
+        else:
+            fg_pred_deltas = pred_deltas.view(-1, self.num_classes, box_dim)[
+                fg_inds, gt_classes[fg_inds]
+            ]
+
+        if self.box_reg_loss_type == "smooth_l1":
+            gt_pred_deltas = self.box2box_transform.get_deltas(
+                proposal_boxes[fg_inds],
+                gt_boxes[fg_inds],
+            )
+            loss_box_reg = smooth_l1_loss(
+                fg_pred_deltas, gt_pred_deltas, self.smooth_l1_beta, reduction="sum"
+            )
+        elif self.box_reg_loss_type == "giou":
+            fg_pred_boxes = self.box2box_transform.apply_deltas(
+                fg_pred_deltas, proposal_boxes[fg_inds]
+            )
+            loss_box_reg = giou_loss(fg_pred_boxes, gt_boxes[fg_inds], reduction="sum")
+        else:
+            raise ValueError(f"Invalid bbox reg loss type '{self.box_reg_loss_type}'")
+        # The reg loss is normalized using the total number of regions (R), not the number
+        # of foreground regions even though the box regression loss is only defined on
+        # foreground regions. Why? Because doing so gives equal training influence to
+        # each foreground example. To see how, consider two different minibatches:
+        #  (1) Contains a single foreground region
+        #  (2) Contains 100 foreground regions
+        # If we normalize by the number of foreground regions, the single example in
+        # minibatch (1) will be given 100 times as much influence as each foreground
+        # example in minibatch (2). Normalizing by the total number of regions, R,
+        # means that the single example in minibatch (1) and each of the 100 examples
+        # in minibatch (2) are given equal influence.
+        return loss_box_reg / max(gt_classes.numel(), 1.0)  # return 0 if empty
+
+    def inference(self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]):
         """
         Returns:
             list[Instances]: same as `fast_rcnn_inference`.
@@ -526,7 +655,9 @@ class DigitOutputLayers(nn.Module):
         num_prop_per_image = [len(p) for p in proposals]
         return predict_boxes.split(num_prop_per_image)
 
-    def predict_boxes(self, predictions, proposals):
+    def predict_boxes(
+            self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]
+    ):
         """
         Returns:
             list[Tensor]: A list of Tensors of predicted class-specific or class-agnostic boxes
@@ -536,9 +667,11 @@ class DigitOutputLayers(nn.Module):
         if not len(proposals):
             return []
         _, proposal_deltas = predictions
-        proposal_boxes = [p.proposal_digit_boxes for p in proposals]
-        num_prop_per_image = [len(p) for p in proposal_boxes]
-        proposal_boxes = proposal_boxes[0].cat(proposal_boxes).tensor
+        # flat all boxes
+        proposal_boxes = Boxes.cat([b for p in proposals for b in p.proposal_digit_boxes]).tensor
+        # num of digit boxes per image
+        num_prop_per_image = [self.num_interests for _ in proposals]
+        # proposal_boxes = proposal_boxes[0].cat(proposal_boxes).tensor
         predict_boxes = self.box2box_transform.apply_deltas(
             # ensure fp32 for decoding precision
             proposal_deltas,
@@ -546,7 +679,9 @@ class DigitOutputLayers(nn.Module):
         )  # Nx(KxB)
         return predict_boxes.split(num_prop_per_image)
 
-    def predict_probs(self, predictions, proposals):
+    def predict_probs(
+            self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Instances]
+    ):
         """
         Returns:
             list[Tensor]: A list of Tensors of predicted class probabilities for each image.
@@ -554,7 +689,7 @@ class DigitOutputLayers(nn.Module):
                 for image i.
         """
         scores, _ = predictions
-        num_inst_per_image = [len(p.proposal_digit_boxes) for p in proposals]
+        num_inst_per_image = [self.num_interests for p in proposals]
         probs = F.softmax(scores, dim=-1)
         return probs.split(num_inst_per_image, dim=0)
 

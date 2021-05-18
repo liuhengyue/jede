@@ -7,7 +7,7 @@ MODEL:
     NUM_CLASSES: 1
   ROI_KEYPOINT_HEAD:
     NAME: KPGRCNNHead
-    NUM_KEYPOINTS: 4
+    NUM_KEYPOINTS: 17
   DEVICE: cuda # cpu or cuda
   WEIGHTS: "detectron2://COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x/137849621/model_final_a6e10b.pkl"
   ROI_DIGIT_HEAD:
@@ -41,6 +41,7 @@ SOLVER:
 DATALOADER:
   NUM_WORKERS: 4
 TEST:
+  # we only evaluate the annotation of 4 keypoints
   KEYPOINT_OKS_SIGMAS: [0.079, 0.079, 0.107, 0.107]
 OUTPUT_DIR: ./output/test_run/
 SEED: 0

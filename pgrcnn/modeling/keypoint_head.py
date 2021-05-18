@@ -15,7 +15,7 @@ from pgrcnn.structures.players import Players as Instances
 
 _TOTAL_SKIPPED = 0
 
-def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer):
+def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_kpts=3):
     """
     Arguments:
         pred_keypoint_logits (Tensor): A tensor of shape (N, K, S, S) where N is the total number
@@ -51,23 +51,19 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer):
         )
         heatmaps.append(heatmaps_per_image.view(-1))
         valid.append(valid_per_image.view(-1))
-        valid_roi_per_image = torch.sum(valid_per_image == 1, dim=1) > 2
+        # sub-sample the ROIs with visible number of keypoints at least 3, optional
+        valid_roi_per_image = torch.sum(valid_per_image == 1, dim=1) > min_visible_kpts - 1
         valid_rois.append(valid_roi_per_image)
         # sample the instances for this image
         valid_roi_per_image = torch.nonzero(valid_roi_per_image).squeeze(1)
         sampled_instances.append(instances_per_image[valid_roi_per_image])
-    # experiment on apply valid per-image
-    # valid_copy = copy.deepcopy(valid)
-    # pred_keypoint_logits_valid = []
-    # for valid_per_image in valid_copy:
-    #     valid_per_image = torch.nonzero(valid_per_image).squeeze(1)
-    #     pred_keypoint_logits_valid.append(pred_keypoint_logits[valid_per_image])
-    # pred_keypoint_logits_valid = cat(pred_keypoint_logits_valid, dim=0)
+
     if len(heatmaps):
 
         keypoint_targets = cat(heatmaps, dim=0)
         valid = cat(valid, dim=0).to(dtype=torch.uint8)
         valid = torch.nonzero(valid).squeeze(1)
+        # 'valid_rois' is a list of tensors appended for each image
         valid_rois = cat(valid_rois, dim=0).to(dtype=torch.uint8)
         valid_rois = torch.nonzero(valid_rois).squeeze(1)
 
@@ -168,9 +164,14 @@ class KPGRCNNHead(KRCNNConvDeconvUpsampleHead):
                 None if self.loss_normalizer == "visible" else num_images * self.loss_normalizer
             )
             kpt_loss, sampled_keypoints_logits, sampled_instances = keypoint_rcnn_loss(x, instances, normalizer=normalizer)
+            num_instances_per_image = [len(i) for i in sampled_instances]
+            # this may not be necessary, but for consistency
+            sampled_keypoints_logits = sampled_keypoints_logits.split(num_instances_per_image, dim=0)
+            for keypoint_logits_per_image, instances_per_image in zip(sampled_keypoints_logits, sampled_instances):
+                instances_per_image.pred_keypoints_logits = keypoint_logits_per_image
             return {
                 "loss_keypoint": kpt_loss * self.loss_weight
-            }, sampled_keypoints_logits, sampled_instances
+            }, sampled_instances
         else:
             keypoint_rcnn_inference(x, instances)
             return instances

@@ -51,6 +51,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         self.digit_only        = cfg.DATASETS.DIGIT_ONLY
         self.num_interests     = cfg.DATASETS.NUM_INTERESTS
         self.pad_to_full       = cfg.DATASETS.PAD_TO_FULL
+        self.keypoints_inds    = cfg.DATASETS.KEYPOINTS_INDS
         # fmt: on
         if self.keypoint_on and is_train:
             # Flip only makes sense in training
@@ -139,7 +140,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                     obj, transforms, image_shape,
                     keypoint_hflip_indices=self.keypoint_hflip_indices,
                     num_interests=self.num_interests,
-                    pad_to_full=self.pad_to_full
+                    pad_to_full=self.pad_to_full,
+                    keypoints_inds=self.keypoints_inds
                 )
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0

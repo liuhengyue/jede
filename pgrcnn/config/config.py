@@ -45,15 +45,19 @@ def add_poseguide_config(cfg):
 
     # dataset configurations
     _C.DATASETS.DIGIT_ONLY = True
+    _C.DATASETS.NUM_IMAGES = -1 # -1 means all
     _C.DATASETS.TRAIN_VIDEO_IDS = [0,1,3]
     _C.DATASETS.TEST_VIDEO_IDS =[2]
     _C.DATASETS.NUM_INTERESTS = 3 # we have 3 potential digit locations (L, C, R), also we can have more
-    _C.DATASETS.NUM_KEYPOINTS = 4 # we only have annotations of 4 keypoints
+    _C.DATASETS.NUM_KEYPOINTS = 4 # we only have annotations of 4 keypoints (LS, RS, RH, LH)
     _C.DATASETS.PAD_TO_FULL = True # if true, we use all 17 keypoints, o/w use 4
+    _C.DATASETS.KEYPOINTS_INDS = [5, 6, 12, 11] # the indices of keypoints we have in the order wrt COCO
+
+    _C.MODEL.ROI_HEADS.NAME = "PGROIHeads"
 
     _C.MODEL.ROI_DIGIT_HEAD = CN()
     _C.MODEL.ROI_DIGIT_HEAD.NAME = "Kpts2DigitHead"
-    _C.MODEL.ROI_DIGIT_HEAD.NUM_DIGITS = 10
+    _C.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES = True
     _C.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES = 10
     _C.MODEL.ROI_DIGIT_HEAD.DEFORMABLE = False
     _C.MODEL.ROI_DIGIT_HEAD.TRANSFORM_DIM = 9 # legacy

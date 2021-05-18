@@ -79,7 +79,114 @@ class JerseyNumberEvaluator(COCOEvaluator):
         # performed using the COCO evaluation server).
         self._do_evaluation = "annotations" in self._coco_api.dataset
         self.digit_only = cfg.DATASETS.DIGIT_ONLY
+        self.keypoints_inds = cfg.DATASETS.KEYPOINTS_INDS
 
+    def _filter_coco_results(self, coco_gt, coco_results, task_type):
+        # determine pg rcnn or other models
+        digit_gt_only = True
+        # determine the eval type
+        person_only = (task_type in ["person_bbox", "keypoints"])
+
+        # hack COCO object
+        coco_gt_copy = copy.deepcopy(coco_gt)
+        # modify 'cats'
+        for k, v in coco_gt.cats.items():
+            if v['name'] == "person":
+                person_id = k
+                digit_gt_only = False
+            if v['name'] == "person" and (not person_only):
+                del coco_gt_copy.cats[k]  # remove person cls
+            if v['name'] != "person" and person_only:
+                del coco_gt_copy.cats[k]
+        # if only find digit classes, do not modify
+        if digit_gt_only:
+            return coco_gt, coco_results
+        # modify coco results by using only 4 keypoints
+        if task_type == "keypoints":
+            for i, coco_result in enumerate(coco_results):
+                if "keypoints" in coco_result:
+                    # only gather the 4 keypoints for evaluation
+                    coco_results[i]["keypoints"] =\
+                        [coco_result["keypoints"][idx * 3 + shift] for idx in self.keypoints_inds for shift in range(3)]
+
+        # modify 'anns'
+        for k, v in coco_gt.anns.items():
+            if v['category_id'] == person_id and (not person_only):
+                del coco_gt_copy.anns[k]
+            if v['category_id'] != person_id and (person_only):
+                del coco_gt_copy.anns[k]
+        # 'catToImgs
+        if person_only:
+            for k in coco_gt.catToImgs.keys():
+                if k != 'default_factory':
+                    if k == person_id and (not person_only):
+                        del coco_gt_copy.catToImgs[k]
+                    if k != person_id and (person_only):
+                        del coco_gt_copy.catToImgs[k]
+        # 'imgToAnns'
+        for k, v in coco_gt.imgToAnns.items():
+            i_to_keep = []
+            for i, ann in enumerate(v):
+                if ann['category_id'] != person_id and (not person_only):
+                    i_to_keep.append(i)
+                if ann['category_id'] == person_id and (person_only):
+                    i_to_keep.append(i)
+            coco_gt_copy.imgToAnns[k] = [coco_gt_copy.imgToAnns[k][i] for i in i_to_keep]
+
+        if person_only:
+            return coco_gt_copy, [coco_result for coco_result in coco_results if
+                                  coco_result["category_id"] == person_id]
+        elif task_type == "digit_bbox":
+            return coco_gt_copy, [coco_result for coco_result in coco_results if
+                                  coco_result["category_id"] != person_id]
+        else:
+            raise Exception("Unrecognized task_type.")
+
+    def _evaluate_predictions_on_coco(self, coco_gt, coco_results, iou_type, kpt_oks_sigmas=None):
+        """
+        Evaluate the coco results using COCOEval API.
+        """
+        assert len(coco_results) > 0
+
+        # faster rcnn: digit_bbox
+        # pg rcnn iou_type options: [digit_bbox, person_bbox, keypoints]
+        task_type = iou_type
+        iou_type = 'bbox' if 'bbox' in iou_type else iou_type
+
+        if iou_type == "segm":
+            coco_results = copy.deepcopy(coco_results)
+            # When evaluating mask AP, if the results contain bbox, cocoapi will
+            # use the box area as the area of the instance, instead of the mask area.
+            # This leads to a different definition of small/medium/large.
+            # We remove the bbox field to let mask AP use mask area.
+            for c in coco_results:
+                c.pop("bbox", None)
+
+        # filter results based on task_type
+        coco_gt, coco_results = self._filter_coco_results(coco_gt, coco_results, task_type)
+
+        coco_dt = coco_gt.loadRes(coco_results)
+        coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
+        # Use the COCO default keypoint OKS sigmas unless overrides are specified
+        if kpt_oks_sigmas:
+            coco_eval.params.kpt_oks_sigmas = np.array(kpt_oks_sigmas)
+
+        if iou_type == "keypoints":
+            num_keypoints = len(coco_results[0]["keypoints"]) // 3
+
+            assert len(coco_eval.params.kpt_oks_sigmas) == num_keypoints, (
+                "[COCOEvaluator] The length of cfg.TEST.KEYPOINT_OKS_SIGMAS (default: 17) "
+                "must be equal to the number of keypoints. However the prediction has {} "
+                "keypoints! For more information please refer to "
+                "http://cocodataset.org/#keypoints-eval.".format(num_keypoints)
+            )
+        # direct print output to the logger
+        with contextlib.redirect_stdout(io.StringIO()):
+            coco_eval.evaluate()
+            coco_eval.accumulate()
+            coco_eval.summarize()
+
+        return coco_eval
 
     def _eval_predictions(self, tasks, predictions):
         """
@@ -118,7 +225,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
         for task in sorted(tasks):
 
             coco_eval = (
-                _evaluate_predictions_on_coco(
+                self._evaluate_predictions_on_coco(
                     self._coco_api, coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
                 )
                 if len(coco_results) > 0
@@ -528,99 +635,5 @@ class OutputLogger:
 
     def flush(self): pass
 
-def _evaluate_predictions_on_coco(coco_gt, coco_results, iou_type, kpt_oks_sigmas=None):
-    """
-    Evaluate the coco results using COCOEval API.
-    """
-    assert len(coco_results) > 0
 
-    # faster rcnn: digit_bbox
-    # pg rcnn iou_type options: [digit_bbox, person_bbox, keypoints]
-    task_type = iou_type
-    iou_type = 'bbox' if 'bbox' in iou_type else iou_type
 
-    if iou_type == "segm":
-        coco_results = copy.deepcopy(coco_results)
-        # When evaluating mask AP, if the results contain bbox, cocoapi will
-        # use the box area as the area of the instance, instead of the mask area.
-        # This leads to a different definition of small/medium/large.
-        # We remove the bbox field to let mask AP use mask area.
-        for c in coco_results:
-            c.pop("bbox", None)
-
-    # filter results based on task_type
-    coco_gt, coco_results = _filter_coco_results(coco_gt, coco_results, task_type)
-
-    coco_dt = coco_gt.loadRes(coco_results)
-    coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
-    # Use the COCO default keypoint OKS sigmas unless overrides are specified
-    if kpt_oks_sigmas:
-        coco_eval.params.kpt_oks_sigmas = np.array(kpt_oks_sigmas)
-
-    if iou_type == "keypoints":
-        num_keypoints = len(coco_results[0]["keypoints"]) // 3
-        assert len(coco_eval.params.kpt_oks_sigmas) == num_keypoints, (
-            "[COCOEvaluator] The length of cfg.TEST.KEYPOINT_OKS_SIGMAS (default: 17) "
-            "must be equal to the number of keypoints. However the prediction has {} "
-            "keypoints! For more information please refer to "
-            "http://cocodataset.org/#keypoints-eval.".format(num_keypoints)
-        )
-    # direct print output to the logger
-    with contextlib.redirect_stdout(OutputLogger(__name__, "INFO")):
-        coco_eval.evaluate()
-        coco_eval.accumulate()
-        coco_eval.summarize()
-
-    return coco_eval
-
-def _filter_coco_results(coco_gt, coco_results, task_type):
-    # determine pg rcnn or other models
-    digit_gt_only = True
-    # determine the eval type
-    person_only = (task_type in ["person_bbox", "keypoints"])
-
-    # hack COCO object
-    coco_gt_copy = copy.deepcopy(coco_gt)
-    # modify 'cats'
-    for k, v in coco_gt.cats.items():
-        if v['name'] == "person":
-            person_id = k
-            digit_gt_only = False
-        if v['name'] == "person" and (not person_only):
-            del coco_gt_copy.cats[k] # remove person cls
-        if v['name'] != "person" and person_only:
-            del coco_gt_copy.cats[k]
-    # if only find digit classes, do not modify
-    if digit_gt_only:
-        return coco_gt, coco_results
-
-    # modify 'anns'
-    for k, v in coco_gt.anns.items():
-        if v['category_id'] == person_id and (not person_only):
-            del coco_gt_copy.anns[k]
-        if v['category_id'] != person_id and (person_only):
-            del coco_gt_copy.anns[k]
-    # 'catToImgs
-    if person_only:
-        for k in coco_gt.catToImgs.keys():
-            if k != 'default_factory':
-                if k == person_id and (not person_only):
-                    del coco_gt_copy.catToImgs[k]
-                if k != person_id and (person_only):
-                    del coco_gt_copy.catToImgs[k]
-    # 'imgToAnns'
-    for k, v in coco_gt.imgToAnns.items():
-        i_to_keep = []
-        for i, ann in enumerate(v):
-            if ann['category_id'] != person_id and (not person_only):
-                i_to_keep.append(i)
-            if ann['category_id'] == person_id and (person_only):
-                i_to_keep.append(i)
-        coco_gt_copy.imgToAnns[k] = [coco_gt_copy.imgToAnns[k][i] for i in i_to_keep]
-
-    if person_only:
-        return coco_gt_copy, [coco_result for coco_result in coco_results if coco_result["category_id"] == person_id]
-    elif task_type == "digit_bbox":
-        return coco_gt_copy, [coco_result for coco_result in coco_results if coco_result["category_id"] != person_id]
-    else:
-        raise Exception("Unrecognized task_type.")

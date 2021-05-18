@@ -1,47 +1,68 @@
+import logging
 import torch
 from torch.nn import functional as F
 from typing import Dict, List, Optional, Tuple, Union
+from detectron2.utils.registry import Registry
 from detectron2.layers import ShapeSpec
 from detectron2.modeling.poolers import ROIPooler
 from detectron2.modeling.roi_heads import build_box_head
-from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers, FastRCNNOutputs
 from detectron2.structures import Boxes, ImageList, pairwise_iou, heatmaps_to_keypoints
 from detectron2.layers import cat
 from detectron2.utils.events import get_event_storage
 from detectron2.structures.boxes import Boxes
+from detectron2.modeling.sampling import subsample_labels
+from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads
+from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY
+from detectron2.structures.keypoints import Keypoints
+
 from pgrcnn.modeling.kpts2digit_head import build_digit_head
 from pgrcnn.utils.ctnet_utils import ctdet_decode
 from pgrcnn.structures.digitboxes import DigitBoxes
 from pgrcnn.modeling.digit_head import DigitOutputLayers
-from pgrcnn.structures.players import Players as Instances
+from pgrcnn.structures.players import Players
 from pgrcnn.modeling.digit_head import paired_iou
-from pgrcnn.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY
-from detectron2.modeling.sampling import subsample_labels
-from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads
-from detectron2.structures.keypoints import Keypoints
+from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
+from pgrcnn.utils.ctnet_utils import pg_rcnn_loss
+
 _TOTAL_SKIPPED = 0
 
 
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["PGROIHeads"]
 
 @ROI_HEADS_REGISTRY.register()
 class PGROIHeads(StandardROIHeads):
     def __init__(self, cfg, input_shape):
         super(PGROIHeads, self).__init__(cfg, input_shape)
         self.num_digit_classes = cfg.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES
+        self.use_person_box_features = cfg.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES
+        self.num_ctdet_proposal = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL
+        self.num_interests = cfg.DATASETS.NUM_INTERESTS
         self._init_digit_head(cfg, input_shape)
 
     def _sample_digit_proposals(
-        self, matched_idxs: torch.Tensor, matched_labels: torch.Tensor, gt_classes: torch.Tensor) \
+            self,
+            matched_idxs: torch.Tensor,
+            matched_labels: torch.Tensor,
+            detection_ct_classes: torch.Tensor,
+            gt_classes: torch.Tensor,
+            gt_ct_classes: torch.Tensor) \
             -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Based on the matching between N proposals and M groundtruth,
         sample the proposals and set their classification labels.
+
+        We use label 0 as the background class.
 
         Args:
             matched_idxs (Tensor): a vector of length N, each is the best-matched
                 gt index in [0, M) for each proposal.
             matched_labels (Tensor): a vector of length N, the matcher's label
                 (one of cfg.MODEL.ROI_HEADS.IOU_LABELS) for each proposal.
+            detection_ct_classes (Tensor): a vector of length N, contains the detection's
+                center class (0, 1, 2)
             gt_classes (Tensor): a vector of length M.
 
         Returns:
@@ -54,21 +75,66 @@ class PGROIHeads(StandardROIHeads):
         # Get the corresponding GT for each proposal
         if has_gt:
             gt_classes = gt_classes[matched_idxs]
-            # Label unmatched proposals (0 label from matcher) as background (for digit is 0)
+            # Label unmatched proposals (0 label from matcher) as background (0)
             gt_classes[matched_labels == 0] = 0
             # Label ignore proposals (-1 label)
             gt_classes[matched_labels == -1] = -1
+            # optional:
+            # compare detection_ct_classes and gt_ct_classes
+            # we want the prediction to be precise, such that
+            # for a prediction from center heatmap, it generates a proposal
+            # which is only 'focused' in the center. Label cross prediction as negative 0
+            non_valid = gt_ct_classes[matched_idxs] != detection_ct_classes
+            gt_classes[non_valid] = 0
 
 
         else:
-            gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
+            # all as background
+            gt_classes = torch.zeros_like(matched_idxs)
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
-            gt_classes, self.batch_size_per_image, self.positive_sample_fraction, 0
+            gt_classes, self.batch_size_per_image, self.positive_fraction, 0
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
         return sampled_idxs, gt_classes[sampled_idxs]
+
+    @classmethod
+    def _init_box_head(cls, cfg, input_shape):
+        # fmt: off
+        in_features = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        pooler_scales = tuple(1.0 / input_shape[k].stride for k in in_features)
+        sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+        # fmt: on
+
+        # If StandardROIHeads is applied on multiple feature maps (as in FPN),
+        # then we share the same predictors and therefore the channel counts must be the same
+        in_channels = [input_shape[f].channels for f in in_features]
+        # Check all channel counts are equal
+        assert len(set(in_channels)) == 1, in_channels
+        in_channels = in_channels[0]
+
+        box_pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+        # Here we split "box head" and "box predictor", which is mainly due to historical reasons.
+        # They are used together so the "box predictor" layers should be part of the "box head".
+        # New subclasses of ROIHeads do not need "box predictor"s.
+        box_head = build_box_head(
+            cfg, ShapeSpec(channels=in_channels, height=pooler_resolution, width=pooler_resolution)
+        )
+        box_predictor = FastRCNNOutputLayers(cfg, box_head.output_shape)
+        return {
+            "box_in_features": in_features,
+            "box_pooler": box_pooler,
+            "box_head": box_head,
+            "box_predictor": box_predictor,
+        }
 
     def _init_digit_head(self, cfg, input_shape):
         """
@@ -89,8 +155,8 @@ class PGROIHeads(StandardROIHeads):
         assert len(set(in_channels)) == 1, in_channels
         in_channels = in_channels[0]
 
-        self.num_ctdet_proposal = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL
 
+        # these are used for digit classification/regression after we get the digit ROI
         self.digit_box_pooler = ROIPooler(
             output_size=pooler_resolution,
             scales=pooler_scales,
@@ -104,62 +170,109 @@ class PGROIHeads(StandardROIHeads):
 
         self.digit_box_predictor = DigitOutputLayers(cfg, self.box_head.output_shape)
 
-        # digit head takes in the features, and keypoint heatmaps of K x 56 x 56, where K could be 4 or 17 depending on
+        # digit_head is used for predicting the initial digit bboxes
+        # digit head takes in the features,
+        # and keypoint heatmaps of K x 56 x 56,
+        # where K could be 4 or 17 depending on
         K = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS if cfg.DATASETS.PAD_TO_FULL else cfg.DATASETS.NUM_KEYPOINTS
         out_size = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION * 4
+        # construct the input shapes, in the order of keypoint heatmap, then person box features
+        input_shapes = {
+            "keypoint_heatmap_shape": ShapeSpec(channels=K, height=out_size, width=out_size),
+            "person_box_features_shape": ShapeSpec(channels=in_channels, height=pooler_resolution, width=pooler_resolution)
+        }
         self.digit_head = build_digit_head(
-            cfg, ShapeSpec(channels=K, height=out_size, width=out_size)
+            cfg, input_shapes
         )
 
-    def _process_single_instance(self, detection, instance):
+    @torch.no_grad()
+    def label_and_sample_digit_proposals(self,
+                                         detections: List[torch.tensor],
+                                         targets: List[Players]):
         """
-        detecion_boxes: (3, 4)
+        detections: (N, K, 6) where K = self.num_ctdet_proposal
         instance: single instance of one image
         """
-        boxes = Boxes(detection[..., :4])
-        boxes.clip(instance.image_size)
-        keep = boxes.nonempty()
-        boxes = boxes[keep]
-        detection_ct_classes = detection[..., -1]
-        # (1, 2, 4) -> (2, 4)
-        gt_digit_boxes = instance.gt_digit_boxes.flat()
-        # keep = gt_digit_boxes.nonempty()
-        # gt_digit_boxes = gt_digit_boxes[keep]
-        # gt_digit_ct_classes = instance.gt_digit_ct_classes
-        # (1, 2, 1) -> (2)
-        gt_digit_classes = instance.gt_digit_classes.view(-1)
-        # Keypoints (1, 3, 3)
-        # gt_digit_centers = instance.gt_digit_centers
-        # (1, 2, 2) -> (2, 2)
-        # gt_digit_scales = instance.gt_digit_scales.view(-1, 2)
+        proposals_with_gt = []
 
-        # get ground-truth match based on iou
-        match_quality_matrix = pairwise_iou(
-            gt_digit_boxes, boxes
-        )
-        matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-        # if gt_digit_classes is 0, then it is background
-        sampled_idxs, gt_digit_classes = \
-            self._sample_digit_proposals(matched_idxs, matched_labels, gt_digit_classes)
+        num_fg_samples = []
+        num_bg_samples = []
+        for detection_per_image, targets_per_image in zip(detections, targets):
+            N = len(targets_per_image)
+            has_gt = N > 0
+            # create a instance index to match with person proposal_box
+            inds = torch.arange(N).repeat_interleave(detection_per_image.size(1), dim=0).to(detection_per_image.device)
+            # shape of (N, K, 6) -> (N * K, 6)
+            detection_per_image = detection_per_image.view(-1, detection_per_image.size(-1))
+            boxes = detection_per_image[:, :4]
+            detection_ct_scores = detection_per_image[:, 4]
+            detection_ct_classes = detection_per_image[:, 5].to(torch.int8)
+            boxes = Boxes(boxes)
+            # we clip by the image, probably clipping based on the person ROI works better?
+            boxes.clip(targets_per_image.image_size)
+            # we have empty boxes at the beigining of the training
+            keep = boxes.nonempty()
+            boxes = boxes[keep]
+            detection_ct_classes = detection_ct_classes[keep]
+            # (N boxes)
+            if len(boxes):
+                # now we only match based on the center class
+                # gt_digit_boxes = targets_per_image.gt_digit_boxes.flat()
+                # (M', 3)
+                valid_gt_mask = targets_per_image.gt_digit_classes > 0
+                # (M', 3, 4) -> (M, 4)
+                gt_digit_boxes = Boxes(targets_per_image.gt_digit_boxes.tensor[valid_gt_mask])
+                gt_digit_classes = targets_per_image.gt_digit_classes[valid_gt_mask]
+                gt_ct_classes = torch.nonzero(valid_gt_mask, as_tuple=True)[1]
 
-        sampled_targets = matched_idxs[sampled_idxs]
-        # need centers as Keypoints of shape (N, 3, 3)
-        instance.proposal_digit_boxes = boxes[sampled_idxs]
-        instance.proposal_digit_ct_classes = detection_ct_classes[keep]
-        instance.gt_digit_boxes = gt_digit_boxes[sampled_targets]
-        instance.gt_digit_classes = gt_digit_classes
-        # instance.gt_digit_ct_classes = gt_digit_ct_classes[sampled_targets]
-        # instance.gt_digit_centers = Keypoints(gt_digit_centers.tensor[sampled_targets])
-        # instance.gt_digit_scales = gt_digit_scales[sampled_targets]
-        # instance.gt_num_digit_scales =  [sampled_targets.shape[0]]
-        # instance.gt_digit_centers = Keypoints(gt_digit_centers[None, ...].repeat_interleave( \
-        #     len_instances[i], 0))
-        # instances[i].gt_digit_scales = gt_digit_scales[None, ...].repeat_interleave( \
-        #     len_instances[i], 0)
-        return instance
+                # get ground-truth match based on iou MxN
+                match_quality_matrix = pairwise_iou(
+                    gt_digit_boxes, boxes
+                )
+                # (N,) idx in [0, M); (N,) label of either 1, 0, or -1
+                matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+                # if gt_digit_classes is 0, then it is background
+                # returns vectors of length N', idx in [0, N); same length N', cls in [1, 10] or background 0
+                sampled_idxs, gt_digit_classes = \
+                    self._sample_digit_proposals(matched_idxs, matched_labels, detection_ct_classes,
+                                                 gt_digit_classes,
+                                                 gt_ct_classes)
+                # the indices of which person each digit proposal is associated with
+                inds = inds[sampled_idxs] # digit -> person
+                boxes = boxes[sampled_idxs]
+                detection_ct_classes = detection_ct_classes[sampled_idxs]
+                # get the reverse ids for person -> digit
+                reverse_inds = [torch.where(inds==i)[0] for i in range(N)]
+                # init a list of Boxes to store digit proposals
+                targets_per_image.proposal_digit_boxes = [
+                    boxes[i] for i in reverse_inds
+                ]
+                # store the corresponding digit center class
+                targets_per_image.proposal_digit_ct_classes = [
+                    detection_ct_classes[i] for i in reverse_inds
+                ]
+                if has_gt:
+                    # the gt index for each digit proposal
+                    gt_digit_boxes = gt_digit_boxes[matched_idxs[sampled_idxs]]
+                    targets_per_image.gt_digit_boxes = [
+                    gt_digit_boxes[i] for i in reverse_inds
+                ]
+                    # gt_digit_classes is returned by '_sample_digit_proposals'
+                    targets_per_image.gt_digit_classes = [
+                    gt_digit_classes[i] for i in reverse_inds
+                ]
+            else:
+                # or add gt to the training
+                device = detection_per_image.device
+                targets_per_image.proposal_digit_boxes = [Boxes(torch.zeros(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.proposal_digit_ct_classes = [torch.zeros(0, device=device).long() for _ in range(N)]
+                targets_per_image.gt_digit_boxes = [Boxes(torch.zeros(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.gt_digit_classes = [torch.zeros(0, device=device).long() for _ in range(N)]
 
 
-    def _forward_ctdet(self, kpts_heatmaps, instances):
+
+
+    def _forward_pose_guided(self, features, instances):
         """
         Forward logic from kpts heatmaps to digit centers and scales (centerNet)
 
@@ -169,13 +282,25 @@ class PGROIHeads(StandardROIHeads):
             of instances in the batch, K is the number of keypoints, and S is the side length
             of the keypoint heatmap. The values are spatial logits.
         """
+        if self.use_person_box_features:
+            # we pool the features again for convenience
+            features = [features[f] for f in self.box_in_features]
+            # 14 x 14 pooler
+            if self.training:
+                box_features = self.keypoint_pooler(features, [x.proposal_boxes for x in instances])
+            else:
+                box_features = self.keypoint_pooler(features, [x.pred_boxes for x in instances])
+        else:
+            box_features = None
+        kpts_logits = cat([b.pred_keypoints_logits for b in instances], dim=0)
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
-        center_heatmaps, scale_heatmaps = self.digit_head(kpts_heatmaps)
+        center_heatmaps, scale_heatmaps = self.digit_head(kpts_logits, box_features)
         # todo: check if center_heatmaps activations on center is not correct
         if self.training:
+            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, instances, normalizer=None)
             with torch.no_grad():
                 bboxes_flat = cat([b.proposal_boxes.tensor for b in instances], dim=0)
-                # (N, num of candidates, (x1, y1, x2, y2, score, center 0 /left 1/right 2)
+                # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                          K=self.num_ctdet_proposal, feature_scale=True)
                 # todo: has duplicate boxes
@@ -183,28 +308,8 @@ class PGROIHeads(StandardROIHeads):
                 detections = list(detections.split(len_instances))
                 # assign new fields to instances
                 # per image
-                for i, (detection, instance) in enumerate(zip(detections, instances)):
-                    if len(instance):
-                        processed_instances = []
-                        for j in range(len(instance)):
-                            processed_instance = self._process_single_instance(detection[j], instance[j])
-                            processed_instances.append(processed_instance)
-                        instances[i] = Instances.cat(processed_instances)
-                    else:
-                        device = instance.proposal_boxes.device
-                        instances[i].proposal_digit_boxes = Boxes(torch.zeros(0, 4, device=device))
-                        instances[i].proposal_digit_ct_classes = torch.zeros(0, device=device).long()
-                        instances[i].gt_digit_boxes = Boxes(torch.zeros(0, 4, device=device))
-                        instances[i].gt_digit_classes = torch.zeros(0, device=device).long()
+                self.label_and_sample_digit_proposals(detections, instances)
 
-
-
-
-            loss = ctdet_loss(center_heatmaps, scale_heatmaps, instances, None)
-            # center_loss = ct_loss(center_heatmaps, instances, None)
-            # scale_loss = hw_loss(scale_heatmaps, instances, feature_scale=True)
-            # return {'ct_loss': center_loss,
-            #         'wh_loss': scale_loss}
             return loss
 
         else:
@@ -215,15 +320,15 @@ class PGROIHeads(StandardROIHeads):
             detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))
             detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
             # assign new fields to instances
-            for i, boxes in enumerate(detection_boxes):
-                instances[i].proposal_digit_boxes = Boxes(boxes.view(-1, 4))
-                instances[i].proposal_digit_ct_classes = detection_ct_classes[i]
+            for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
+                instances[i].proposal_digit_boxes = [Boxes(b) for b in boxes]
+                instances[i].proposal_digit_ct_classes = [c for c in detection_ct_cls]
             return instances
 
     def _forward_digit_box(self, features, proposals):
         features = [features[f] for f in self.in_features]
         # most likely have empty boxes
-        detection_boxes = [x.proposal_digit_boxes for x in proposals]
+        detection_boxes = [Boxes.cat(x.proposal_digit_boxes) for x in proposals]
         box_features = self.digit_box_pooler(features, detection_boxes)
         box_features = self.digit_box_head(box_features)
         predictions = self.digit_box_predictor(box_features)
@@ -243,8 +348,8 @@ class PGROIHeads(StandardROIHeads):
 
 
     def forward_with_given_boxes(
-        self, features: Dict[str, torch.Tensor], instances: List[Instances]
-    ) -> List[Instances]:
+        self, features: Dict[str, torch.Tensor], instances: List[Players]
+    ) -> List[Players]:
         """
         Use the given boxes in `instances` to produce other (non-box) per-ROI outputs.
 
@@ -267,8 +372,8 @@ class PGROIHeads(StandardROIHeads):
 
         instances = self._forward_mask(features, instances)
         instances = self._forward_keypoint(features, instances)
-        keypoints_logits = cat([instance.pred_keypoints_logits for instance in instances], dim=0)
-        instances = self._forward_ctdet(keypoints_logits, instances)
+        # keypoints_logits = cat([instance.pred_keypoints_logits for instance in instances], dim=0)
+        instances = self._forward_pose_guided(features, instances)
         instances = self._forward_digit_box(features, instances)
         # remove proposal boxes
         for instance in instances:
@@ -280,9 +385,9 @@ class PGROIHeads(StandardROIHeads):
             self,
             images: ImageList,
             features: Dict[str, torch.Tensor],
-            proposals: List[Instances],
-            targets: Optional[List[Instances]] = None,
-    ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
+            proposals: List[Players],
+            targets: Optional[List[Players]] = None,
+    ) -> Tuple[List[Players], Dict[str, torch.Tensor]]:
         """
         See :class:`ROIHeads.forward`.
         """
@@ -293,14 +398,15 @@ class PGROIHeads(StandardROIHeads):
         del targets
 
         if self.training:
+            # proposals or sampled_instances will be modified in-place
             losses = self._forward_box(features, proposals)
             # Usually the original proposals used by the box head are used by the mask, keypoint
             # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
             # predicted by the box head.
             losses.update(self._forward_mask(features, proposals))
-            kpt_loss, sampled_keypoints_logits, sampled_instances = self._forward_keypoint(features, proposals)
+            kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
             losses.update(kpt_loss)
-            losses.update(self._forward_ctdet(sampled_keypoints_logits, sampled_instances))
+            losses.update(self._forward_pose_guided(features, sampled_instances))
             losses.update(self._forward_digit_box(features, sampled_instances))
             return proposals, losses
         else:

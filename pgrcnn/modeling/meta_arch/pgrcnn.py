@@ -7,12 +7,13 @@ from torch import nn
 from detectron2.structures import ImageList
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.logger import log_first_n
-# from detectron2.utils.visualizer import Visualizer
 
-from detectron2.modeling.backbone import build_backbone
-from pgrcnn.modeling.proposal_generator import build_proposal_generator
-from pgrcnn.modeling.roi_heads.roi_heads import build_roi_heads
 from detectron2.modeling import META_ARCH_REGISTRY
+from detectron2.modeling.backbone import build_backbone
+from detectron2.modeling.roi_heads.roi_heads import build_roi_heads
+from detectron2.modeling.proposal_generator import build_proposal_generator
+# from pgrcnn.modeling.proposal_generator import build_proposal_generator
+
 from pgrcnn.modeling.postprocessing import pgrcnn_postprocess
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 

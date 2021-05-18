@@ -75,7 +75,7 @@ assert os.path.exists(DATASET_ROOT), "Dataset jnw not found in {}".format(DATASE
 # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
 # bbox annotation older is XYXY_ABS, keypoints is x, y, v
 
-def get_dicts(data_dir, anno_dir, split=None, digit_only=False):
+def get_dicts(data_dir, anno_dir, split=None, digit_only=False, num_images=-1):
     """
     Get annotations for specific split/video.
     Note these fields could be an empty list:
@@ -104,6 +104,9 @@ def get_dicts(data_dir, anno_dir, split=None, digit_only=False):
             annotations[i]['annotations'][j]['bbox_mode'] = BoxMode.XYXY_ABS
             annotations[i]['annotations'][j]['digit_ids'] = \
                 [CLASS_NAMES.index(str(digit)) for digit in annotations[i]['annotations'][j]['digit_labels']]
+    if num_images > 0:
+        # fixed order
+        annotations = annotations[:num_images]
 
     return annotations
 
@@ -122,7 +125,10 @@ def register_jerseynumbers(cfg):
     dataset_dir =  os.path.join(DATASET_ROOT, 'total/')
     annotation_dir = os.path.join(DATASET_ROOT, 'annotations/jnw_annotations.json')
     for name, d in zip(['train', 'val'], [train_video_ids, test_video_ids]):
-        DatasetCatalog.register("jerseynumbers_" + name, lambda d=d: get_dicts(dataset_dir, annotation_dir, d, digit_only=cfg.DATASETS.DIGIT_ONLY))
+        DatasetCatalog.register("jerseynumbers_" + name,
+                                lambda d=d: get_dicts(dataset_dir, annotation_dir, d,
+                                                      digit_only=cfg.DATASETS.DIGIT_ONLY,
+                                                      num_images=cfg.DATASETS.NUM_IMAGES))
         metadataCat = MetadataCatalog.get("jerseynumbers_" + name)
         metadataCat.set(thing_classes=CLASS_NAMES)
         metadataCat.set(keypoint_names=KEYPOINT_NAMES)

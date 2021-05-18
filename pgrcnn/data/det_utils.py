@@ -28,7 +28,8 @@ def transform_instance_annotations(
         annotation, transforms, image_size, *,
         keypoint_hflip_indices=None,
         num_interests=3,
-        pad_to_full=True
+        pad_to_full=True,
+        keypoints_inds=[5, 6, 12, 11]
 ):
     """
     Apply transforms to box, segmentation and keypoints annotations of a single instance.
@@ -81,7 +82,7 @@ def transform_instance_annotations(
     # construct a fixed keypoints array, in the order of center, left, right
     digit_center_keypoints = np.zeros((num_interests, 3))
     # should also do this for the scale (offsets)
-    digit_scales = np.zeros((num_interests, 3))
+    digit_scales = np.zeros((num_interests, 2))
     # digit ids
     digit_ids = np.ones(3) * (-1)
     # if num_digits == 1 - 0, 1, 2; if num_digits == 2 - 3 ~ 8
@@ -92,17 +93,17 @@ def transform_instance_annotations(
         digit_scales_h = (bbox[:, 3] - bbox[:, 1])
         digit_centers_vis = np.ones(num_digits) * 2
         digit_centers_triplet = np.stack((digit_centers_x, digit_centers_y, digit_centers_vis), axis=1)
-        digit_scales_triplet = np.stack((digit_scales_w, digit_scales_h, digit_centers_vis), axis=1)
+        digit_scales_tuple = np.stack((digit_scales_w, digit_scales_h), axis=1)
         # one digit case
         if num_digits == 1:
             digit_bboxes[0, :] = bbox
             digit_center_keypoints[:1, :] = digit_centers_triplet
-            digit_scales[:1, :] = digit_scales_triplet
+            digit_scales[:1, :] = digit_scales_tuple
             digit_ids[0] = annotation["digit_ids"][0]
         elif num_digits == 2:
             digit_bboxes[1:, :] = bbox
             digit_center_keypoints[1:, :] = digit_centers_triplet
-            digit_scales[1:, :] = digit_scales_triplet
+            digit_scales[1:, :] = digit_scales_tuple
             digit_ids[1:] = np.array(annotation["digit_ids"])
         else:
             raise NotImplementedError("currently not implemented.")
@@ -142,7 +143,7 @@ def transform_instance_annotations(
             annotation["keypoints"], transforms, image_size, keypoint_hflip_indices
         )
         # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
-        full_keypoints[[5, 6, 12, 11], :] = keypoints
+        full_keypoints[keypoints_inds, :] = keypoints
     annotation["keypoints"] = full_keypoints
 
 
