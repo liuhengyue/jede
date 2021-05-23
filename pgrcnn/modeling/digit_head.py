@@ -58,10 +58,13 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="fast_rcnn"):
     pred_classes = pred_logits.argmax(dim=1)
     bg_class_ind = pred_logits.shape[1] - 1
 
-    fg_inds = (gt_classes >= 0) & (gt_classes < bg_class_ind)
+    fg_inds = (gt_classes > 0)
     num_fg = fg_inds.nonzero().numel()
-    fg_gt_classes = gt_classes[fg_inds]
-    fg_pred_classes = pred_classes[fg_inds]
+    try:
+        fg_gt_classes = gt_classes[fg_inds]
+        fg_pred_classes = pred_classes[fg_inds]
+    except:
+        pass
 
     num_false_negative = (fg_pred_classes == bg_class_ind).nonzero().numel()
     num_accurate = (pred_classes == gt_classes).nonzero().numel()
@@ -293,7 +296,7 @@ class DigitOutputLayers(nn.Module):
 
         # parse classification outputs
         gt_classes = (
-            cat([cat(p.gt_digit_classes, dim=0) for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+            cat([cat(p.gt_digit_classes, dim=0) for p in proposals], dim=0) if len(proposals) else torch.empty(0, device=proposal_deltas.device)
         )
         _log_classification_stats(scores, gt_classes)
 
@@ -306,7 +309,7 @@ class DigitOutputLayers(nn.Module):
             # Here we just use proposal_boxes as an arbitrary placeholder because its
             # value won't be used in self.box_reg_loss().
             gt_boxes = cat(
-                [(Boxes.cat(p.gt_digit_boxes) if p.has("gt_boxes") else Boxes.cat(p.proposal_digit_boxes)).tensor for p in proposals],
+                [(Boxes.cat(p.gt_digit_boxes) if p.has("gt_digit_boxes") else Boxes.cat(p.proposal_digit_boxes)).tensor for p in proposals],
                 dim=0,
             )
         else:
@@ -336,12 +339,13 @@ class DigitOutputLayers(nn.Module):
         # arg to smooth_l1_loss is False (otherwise it uses torch.mean internally
         # and would produce a nan loss).
         # bg class is 0, so the fg inds is changed
-        fg_inds = nonzero_tuple(gt_classes >= self.bg_class_ind)[0]
+        fg_inds = nonzero_tuple(gt_classes > self.bg_class_ind)[0]
         if pred_deltas.shape[1] == box_dim:  # cls-agnostic regression
             fg_pred_deltas = pred_deltas[fg_inds]
         else:
+            # we minus 1 since bg class is at the first place
             fg_pred_deltas = pred_deltas.view(-1, self.num_classes, box_dim)[
-                fg_inds, gt_classes[fg_inds]
+                fg_inds, gt_classes[fg_inds] - 1
             ]
 
         if self.box_reg_loss_type == "smooth_l1":

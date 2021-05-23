@@ -76,6 +76,8 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_sca
     xs = (xs / width) * roi_widths + offset_x
     ys = (ys / height) * roi_heights + offset_y
     wh = _transpose_and_gather_feat(wh, inds)
+    # we could have negative width or height
+    wh.clamp_(min=0)
     if cat_spec_wh:
         wh = wh.view(batch, K, cat, 2)
         clses_ind = clses.view(batch, K, 1, 1).expand(batch, K, 1, 2).long()
@@ -162,7 +164,7 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer)
     pred_scale_logits = pred_scale_logits.view(N, 2, H * W)
     # (N, 2)
     valid = valid // K # K-agnostic
-    pred_scale_logits = pred_scale_logits[valid // K, :, keypoint_targets]
+    pred_scale_logits = pred_scale_logits[valid, :, keypoint_targets]
     # we predict the scale wrt. S
     proposal_boxes = cat([x.proposal_boxes.tensor for x in instances], dim=0)[valid]
     proposal_boxes_w = proposal_boxes[:, 2] - proposal_boxes[:, 0]

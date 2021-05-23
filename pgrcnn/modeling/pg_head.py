@@ -199,7 +199,6 @@ class PGROIHeads(StandardROIHeads):
         num_bg_samples = []
         for detection_per_image, targets_per_image in zip(detections, targets):
             N = len(targets_per_image)
-            has_gt = N > 0
             # create a instance index to match with person proposal_box
             inds = torch.arange(N).repeat_interleave(detection_per_image.size(1), dim=0).to(detection_per_image.device)
             # shape of (N, K, 6) -> (N * K, 6)
@@ -210,7 +209,7 @@ class PGROIHeads(StandardROIHeads):
             boxes = Boxes(boxes)
             # we clip by the image, probably clipping based on the person ROI works better?
             boxes.clip(targets_per_image.image_size)
-            # we have empty boxes at the beigining of the training
+            # we have empty boxes at the beginning of the training
             keep = boxes.nonempty()
             boxes = boxes[keep]
             detection_ct_classes = detection_ct_classes[keep]
@@ -251,16 +250,20 @@ class PGROIHeads(StandardROIHeads):
                 targets_per_image.proposal_digit_ct_classes = [
                     detection_ct_classes[i] for i in reverse_inds
                 ]
+                # gt_digit_classes is returned by '_sample_digit_proposals'
+                targets_per_image.gt_digit_classes = [
+                    gt_digit_classes[i] for i in reverse_inds]
+                has_gt = len(gt_digit_boxes) > 0
                 if has_gt:
                     # the gt index for each digit proposal
                     gt_digit_boxes = gt_digit_boxes[matched_idxs[sampled_idxs]]
                     targets_per_image.gt_digit_boxes = [
-                    gt_digit_boxes[i] for i in reverse_inds
-                ]
-                    # gt_digit_classes is returned by '_sample_digit_proposals'
-                    targets_per_image.gt_digit_classes = [
-                    gt_digit_classes[i] for i in reverse_inds
-                ]
+                    gt_digit_boxes[i] for i in reverse_inds]
+                else:
+                    # remove the gt fields
+                    targets_per_image.remove("gt_digit_boxes")
+                    # targets_per_image.gt_digit_boxes = [gt_digit_boxes for _ in range(N)]
+                    # targets_per_image.gt_digit_classes = [torch.zeros(0, device=detection_per_image.device).long() for _ in range(N)]
             else:
                 # or add gt to the training
                 device = detection_per_image.device
@@ -268,6 +271,8 @@ class PGROIHeads(StandardROIHeads):
                 targets_per_image.proposal_digit_ct_classes = [torch.zeros(0, device=device).long() for _ in range(N)]
                 targets_per_image.gt_digit_boxes = [Boxes(torch.zeros(0, 4, device=device)) for _ in range(N)]
                 targets_per_image.gt_digit_classes = [torch.zeros(0, device=device).long() for _ in range(N)]
+
+
 
 
 
@@ -295,7 +300,6 @@ class PGROIHeads(StandardROIHeads):
         kpts_logits = cat([b.pred_keypoints_logits for b in instances], dim=0)
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
         center_heatmaps, scale_heatmaps = self.digit_head(kpts_logits, box_features)
-        # todo: check if center_heatmaps activations on center is not correct
         if self.training:
             loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, instances, normalizer=None)
             with torch.no_grad():
@@ -329,7 +333,7 @@ class PGROIHeads(StandardROIHeads):
     def _forward_digit_box(self, features, proposals):
         features = [features[f] for f in self.in_features]
         # most likely have empty boxes, Boxes.cat([]) will return Boxes on cpu
-        detection_boxes = [Boxes.cat(x.proposal_digit_boxes).to(x.pred_boxes.device) for x in proposals]
+        detection_boxes = [Boxes.cat(x.proposal_digit_boxes).to(features[0].device) for x in proposals]
         box_features = self.digit_box_pooler(features, detection_boxes)
         box_features = self.digit_box_head(box_features)
         predictions = self.digit_box_predictor(box_features)
