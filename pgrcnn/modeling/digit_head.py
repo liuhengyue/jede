@@ -294,26 +294,28 @@ class DigitOutputLayers(nn.Module):
         """
         scores, proposal_deltas = predictions
 
-        # parse classification outputs
-        gt_classes = (
-            cat([cat(p.gt_digit_classes, dim=0) for p in proposals], dim=0) if len(proposals) else torch.empty(0, device=proposal_deltas.device)
-        )
-        _log_classification_stats(scores, gt_classes)
-
         # parse box regression outputs
         if len(proposals):
-            proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor for p in proposals], dim=0)  # Nx4
+            proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor.to(proposal_deltas.device) for p in proposals], dim=0)  # Nx4
             assert not proposal_boxes.requires_grad, "Proposals should not require gradients!"
             # If "gt_boxes" does not exist, the proposals must be all negative and
             # should not be included in regression loss computation.
             # Here we just use proposal_boxes as an arbitrary placeholder because its
             # value won't be used in self.box_reg_loss().
             gt_boxes = cat(
-                [(Boxes.cat(p.gt_digit_boxes) if p.has("gt_digit_boxes") else Boxes.cat(p.proposal_digit_boxes)).tensor for p in proposals],
+                [(Boxes.cat(p.gt_digit_boxes) if p.has("gt_digit_boxes")
+                  else Boxes.cat(p.proposal_digit_boxes)).tensor.to(proposal_deltas.device) for p in proposals],
                 dim=0,
             )
+            # parse classification outputs
+            gt_classes = [cat(p.gt_digit_classes, dim=0) if len(p.gt_digit_classes)
+                          else torch.empty(0, device=proposal_deltas.device, dtype=torch.long) for p in proposals]
+            gt_classes = (cat(gt_classes, dim=0) if len(gt_classes) else torch.empty(0, device=proposal_deltas.device, dtype=torch.long))
         else:
             proposal_boxes = gt_boxes = torch.empty((0, 4), device=proposal_deltas.device)
+            gt_classes = torch.empty(0, device=proposal_deltas.device)
+
+        _log_classification_stats(scores, gt_classes)
 
         losses = {
             "loss_digit_cls": cross_entropy(scores, gt_classes, reduction="mean"),

@@ -267,10 +267,10 @@ class PGROIHeads(StandardROIHeads):
             else:
                 # or add gt to the training
                 device = detection_per_image.device
-                targets_per_image.proposal_digit_boxes = [Boxes(torch.zeros(0, 4, device=device)) for _ in range(N)]
-                targets_per_image.proposal_digit_ct_classes = [torch.zeros(0, device=device).long() for _ in range(N)]
-                targets_per_image.gt_digit_boxes = [Boxes(torch.zeros(0, 4, device=device)) for _ in range(N)]
-                targets_per_image.gt_digit_classes = [torch.zeros(0, device=device).long() for _ in range(N)]
+                targets_per_image.proposal_digit_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.proposal_digit_ct_classes = [torch.empty(0, device=device).long() for _ in range(N)]
+                targets_per_image.gt_digit_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.gt_digit_classes = [torch.empty(0, device=device).long() for _ in range(N)]
 
 
 
@@ -320,7 +320,7 @@ class PGROIHeads(StandardROIHeads):
             bboxes_flat = cat([b.pred_boxes.tensor for b in instances], dim=0)
             # (N, num of candidates, (x1, y1, x2, y2, score, center 0 /left 1/right 2)
             detection = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
-                                     K=self.num_ctdet_proposal, feature_scale="feature")
+                                     K=self.num_ctdet_proposal, feature_scale="feature", training=False)
             detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))
             detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
             # assign new fields to instances

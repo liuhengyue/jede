@@ -154,11 +154,12 @@ class Kpts2DigitHead(nn.Module):
             self._output_size = (1, self._output_size[1], self._output_size[2])
 
         if self.use_person_box_features:
+            conv_dims = [32]
             self._init_layers_with_person_features(conv_dims, conv_norm, person_box_features_shape)
         else:
             self._init_plain_layers(conv_dims, conv_norm)
-
-        self._init_output_layers(conv_norm)
+        conv_dims = [64] * 4
+        self._init_output_layers(conv_norm, conv_dims)
 
         # for layer in self.conv_norm_relus:
         #     if type(layer).__name__ != 'DeformBottleneckBlock': #  already init in the block
@@ -274,11 +275,72 @@ class Kpts2DigitHead(nn.Module):
         # we will interpolate by 2 during forward so the spatial dim remains the same
         self._output_size = (conv_dim * 2, self._output_size[1], self._output_size[2])
 
+    # def _init_layers_with_person_features(self, conv_dims, conv_norm, person_box_features_shape):
+    #     if self.use_deform:
+    #         num_groups = 1
+    #         width_per_group = 64
+    #         bottleneck_channels = num_groups * width_per_group
+    #         for k, conv_dim in enumerate(conv_dims):
+    #             conv = DeformBottleneckBlock(
+    #                 in_channels = self._output_size[0],
+    #                 out_channels = conv_dim,
+    #                 stride = 1,
+    #                 bottleneck_channels = bottleneck_channels,
+    #                 stride_in_1x1 = True,
+    #                 deform_modulated = True,
+    #                 norm = ''
+    #             )
+    #             self.add_module("kpt_deform_conv{}".format(k + 1), conv)
+    #             self.conv_norm_relus.append(conv)
+    #             self._output_size = (conv_dim, self._output_size[1], self._output_size[2])
+    #     else:
+    #         for k, conv_dim in enumerate(conv_dims):
+    #             conv = Conv2d(
+    #                 self._output_size[0],
+    #                 conv_dim,
+    #                 kernel_size=3,
+    #                 padding=1,
+    #                 bias=not conv_norm,
+    #                 norm=get_norm(conv_norm, conv_dim),
+    #                 activation=F.relu,
+    #             )
+    #             self.add_module("kpt_conv{}".format(k + 1), conv)
+    #             self.conv_norm_relus.append(conv)
+    #             self._output_size = (conv_dim, self._output_size[1], self._output_size[2])
+    #
+    #     # for box person feature transformations
+    #     # default up_scale to 2.0 (this can be made an option)
+    #     up_scale = 2.0
+    #     in_channels = person_box_features_shape.channels
+    #
+    #     for idx, conv_dim in enumerate(conv_dims, 1):
+    #         module = Conv2d(in_channels,
+    #                         conv_dim,
+    #                         kernel_size=3,
+    #                         stride=1,
+    #                         padding=1,
+    #                         bias=not conv_norm,
+    #                         norm=get_norm(conv_norm, conv_dim),
+    #                         activation=F.relu,
+    #                         )
+    #         self.add_module("feat_conv{}".format(idx), module)
+    #         in_channels = conv_dim
+    #         self.person_feat_layers.append(module)
+    #         self._output_size = (conv_dim, self._output_size[1], self._output_size[2])
+    #
+    #     deconv_kernel = 4
+    #     module = ConvTranspose2d(
+    #         in_channels, conv_dim, deconv_kernel, stride=2, padding=deconv_kernel // 2 - 1
+    #     )
+    #     self.add_module("feat_upconv{}".format(1), module)
+    #     self.up_scale = up_scale
+    #     self.person_feat_layers.append(module)
+    #     # we will interpolate by 2 during forward so the spatial dim remains the same
+    #     self._output_size = (conv_dim * 2, self._output_size[1], self._output_size[2])
 
-    def _init_output_layers(self, conv_norm):
+    def _init_output_layers(self, conv_norm, conv_dims):
         # need a few convs
         in_channels = self._output_size[0]
-        conv_dims = [64, 64]
         for idx, conv_dim in enumerate(conv_dims, 1):
             module = Conv2d(self._output_size[0],
                             conv_dim,

@@ -28,10 +28,10 @@ def _transpose_and_gather_feat(feat, ind):
     feat = _gather_feat(feat, ind)
     return feat
 
-def _topk(scores, K=40):
+def _topk(scores, K=40, largest=True):
     batch, cat, height, width = scores.size()
 
-    topk_scores, topk_inds = torch.topk(scores.view(batch, cat, -1), K)
+    topk_scores, topk_inds = torch.topk(scores.view(batch, cat, -1), K, largest=largest)
 
     topk_inds = topk_inds % (height * width)
     topk_ys = (topk_inds / width).int().float()
@@ -46,7 +46,12 @@ def _topk(scores, K=40):
 
     return topk_score, topk_inds, topk_clses, topk_ys, topk_xs
 
-def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_scale="feature"):
+def _sample_top_n_bttm_k(scores, K=10, ratio=1/3):
+    topk = _topk(scores, K= round(K * ratio))
+    bttm2k = _topk(scores, K=round(2 * K / 3), largest=False)
+    return [torch.cat((t, b), dim=-1) for t, b in zip(topk, bttm2k)]
+
+def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_scale="feature", training=True):
     batch, cat, height, width = heat.size()
 
     if batch == 0:
@@ -55,8 +60,10 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_sca
     heat = torch.sigmoid(heat)
     # perform nms on heatmaps
     heat = _nms(heat)
-
-    scores, inds, clses, ys, xs = _topk(heat, K=K)
+    if training:
+        scores, inds, clses, ys, xs = _sample_top_n_bttm_k(heat, K=K)
+    else:
+        scores, inds, clses, ys, xs = _topk(heat, K=K)
     if reg is not None:
         reg = _transpose_and_gather_feat(reg, inds)
         reg = reg.view(batch, K, 2)
