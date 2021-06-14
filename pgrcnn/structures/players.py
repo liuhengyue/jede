@@ -88,11 +88,14 @@ class Players(Instances):
         ret = Players(self._image_size)
         for k, v in self._fields.items():
             # item can be mask or index
-            if type(v) == list:
-                if item.dtype == torch.bool: # bool tensor
-                    ret.set(k, list(compress(v, item.tolist())))
-                elif item.dtype == torch.Tensor: # index tensor
-                    ret.set(k, [v[idx] for idx in item.tolist()])
+            if isinstance(v, list):
+                if isinstance(item, torch.Tensor):
+                    if item.dtype == torch.bool: # bool tensor
+                        ret.set(k, list(compress(v, item.tolist())))
+                    elif item.dtype == torch.long: # index tensor
+                        ret.set(k, [v[idx] for idx in item])
+                    else:
+                        raise NotImplementedError("Not supported index by {}".format(type(item)))
                 else: # int index
                     ret.set(k, v[item])
 

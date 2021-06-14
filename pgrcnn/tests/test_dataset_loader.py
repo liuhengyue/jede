@@ -1,3 +1,4 @@
+import logging
 import cv2
 from detectron2.engine import default_argument_parser
 from pgrcnn.data.mapper import JerseyNumberDatasetMapper
@@ -5,6 +6,8 @@ from pgrcnn.data.build import build_detection_train_loader
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from detectron2.data import MetadataCatalog
 from pgrcnn.utils.launch_utils import setup
+logger = logging.getLogger("pgrcnn")
+
 
 def visualize_training(batched_inputs, cfg):
     """
@@ -41,12 +44,16 @@ if __name__ == "__main__":
     cfg = setup(args)
     dataloader = build_detection_train_loader(cfg, mapper=JerseyNumberDatasetMapper(cfg, True))
 
-    show_data = True
+    show_data = False
     for data in dataloader:
-        if show_data:
-            file_name, vis_img = visualize_training(data, cfg)
-            cv2.imshow(file_name, vis_img)
-            k = cv2.waitKey(0)
-            cv2.destroyAllWindows()
-            if k == 27:
-                break
+        try:
+            logger.info(f"{data[0]['file_name']}")
+            if show_data:
+                file_name, vis_img = visualize_training(data, cfg)
+                cv2.imshow(file_name, vis_img)
+                k = cv2.waitKey(0)
+                cv2.destroyAllWindows()
+                if k == 27:
+                    break
+        except:
+            raise Exception(f"Error when processing {data[0]['file_name']}")

@@ -149,7 +149,7 @@ def build_detection_train_loader(cfg, mapper=None):
     logger = logging.getLogger(__name__)
     logger.info("Using training sampler {}".format(sampler_name))
     if sampler_name == "TrainingSampler":
-        sampler = samplers.TrainingSampler(len(dataset))
+        sampler = samplers.TrainingSampler(len(dataset), shuffle=cfg.DATALOADER.SHUFFLE)
     elif sampler_name == "RepeatFactorTrainingSampler":
         sampler = samplers.RepeatFactorTrainingSampler(
             dataset_dicts, cfg.DATALOADER.REPEAT_THRESHOLD

@@ -8,13 +8,14 @@ from PIL import Image, ImageOps
 from detectron2.structures import (
     Instances,
     BitMasks,
-    Boxes,
+    # Boxes,
     BoxMode,
     Keypoints,
     PolygonMasks,
     RotatedBoxes,
     polygons_to_bitmask,
 )
+from pgrcnn.structures.boxes import Boxes
 from pgrcnn.structures.players import Players
 from pgrcnn.structures.digitboxes import DigitBoxes
 from detectron2.data import transforms as T
@@ -73,44 +74,8 @@ def transform_instance_annotations(
     bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
     # (n, 4) if given an empty list, it will return (0, 4)
     bbox = transforms.apply_box(bbox)
+    annotation["digit_bboxes"] = bbox
 
-    num_digits = bbox.shape[0] # 0, 1, or 2
-    # we want to represent the digit_bboxes centers as keypoints of shape (num_interests x 3)
-    # no label - 0, visible - 2 as in COCO
-    # bboxes are also constructed into a fixed size of 3 bboxes for a person
-    digit_bboxes = np.zeros((num_interests, 4))
-    # construct a fixed keypoints array, in the order of center, left, right
-    digit_center_keypoints = np.zeros((num_interests, 3))
-    # should also do this for the scale (offsets)
-    digit_scales = np.zeros((num_interests, 2), dtype=np.float32)
-    # digit ids
-    digit_ids = np.ones(3) * (-1)
-    # if num_digits == 1 - 0, 1, 2; if num_digits == 2 - 3 ~ 8
-    if num_digits > 0:
-        digit_centers_x = (bbox[:, 0] + bbox[:, 2]) / 2
-        digit_centers_y = (bbox[:, 1] + bbox[:, 3]) / 2
-        digit_scales_w = (bbox[:, 2] - bbox[:, 0])
-        digit_scales_h = (bbox[:, 3] - bbox[:, 1])
-        digit_centers_vis = np.ones(num_digits) * 2
-        digit_centers_triplet = np.stack((digit_centers_x, digit_centers_y, digit_centers_vis), axis=1)
-        digit_scales_tuple = np.stack((digit_scales_w, digit_scales_h), axis=1)
-        # one digit case
-        if num_digits == 1:
-            digit_bboxes[0, :] = bbox
-            digit_center_keypoints[:1, :] = digit_centers_triplet
-            digit_scales[:1, :] = digit_scales_tuple
-            digit_ids[0] = annotation["digit_ids"][0]
-        elif num_digits == 2:
-            digit_bboxes[1:, :] = bbox
-            digit_center_keypoints[1:, :] = digit_centers_triplet
-            digit_scales[1:, :] = digit_scales_tuple
-            digit_ids[1:] = np.array(annotation["digit_ids"])
-        else:
-            raise NotImplementedError("currently not implemented.")
-    annotation["digit_bboxes"] = digit_bboxes
-    annotation["digit_centers"] = digit_center_keypoints
-    annotation["digit_scales"] = digit_scales
-    annotation["digit_ids"] = digit_ids
 
     if "segmentation" in annotation:
         # each instance contains 1 or more polygons
@@ -192,7 +157,7 @@ def transform_keypoint_annotations(keypoints, transforms, image_size, keypoint_h
     return keypoints
 
 
-def annotations_to_instances(annos, image_size, mask_format="polygon", digit_only=False, pad=True):
+def annotations_to_instances(annos, image_size, mask_format="polygon", digit_only=False, pad=False):
     """
     Create an :class:`Instances` object used by the models,
     from instance annotations in the dataset dict.
@@ -281,15 +246,16 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
         classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
         target.gt_digit_classes = classes
         # add centers and scales
-        digit_centers = [obj["digit_centers"] for obj in annos]
-        digit_scales = [obj["digit_scales"] for obj in annos]
-        digit_ct_classes = [obj["digit_ct_classes"] for obj in annos]
-        target.gt_digit_centers = [torch.tensor(digit_center, dtype=torch.float32) \
-                                   for digit_center in digit_centers]
-        target.gt_digit_scales = [torch.tensor(digit_scale, dtype=torch.float32) \
-                                  for digit_scale in digit_scales]
-        target.gt_digit_ct_classes = [torch.tensor(digit_ct_class, dtype=torch.int64) \
-                                      for digit_ct_class in digit_ct_classes]
+        # target.gt_digit_centers = [torch.cat((box.get_centers(), torch.ones((len(box), 1))), dim=1).unsqueeze(1) for box in boxes]
+        target.gt_digit_centers = [box.get_centers() for box in boxes]
+        target.gt_digit_scales = [box.get_scales() for box in boxes]
+        # digit_ct_classes = [obj["digit_ct_classes"] for obj in annos]
+        # target.gt_digit_centers = [torch.tensor(digit_center, dtype=torch.float32) \
+        #                            for digit_center in digit_centers]
+        # target.gt_digit_scales = [torch.tensor(digit_scale, dtype=torch.float32) \
+        #                           for digit_scale in digit_scales]
+        # target.gt_digit_ct_classes = [torch.tensor(digit_ct_class, dtype=torch.int64) \
+        #                               for digit_ct_class in digit_ct_classes]
     if len(annos) and "segmentation" in annos[0]:
         segms = [obj["segmentation"] for obj in annos]
         if mask_format == "polygon":
@@ -322,7 +288,6 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
     # not every instance has the keypoints annotation, so we pad it
     kpts = [obj.get("keypoints", []) for obj in annos]
     target.gt_keypoints = Keypoints(kpts)
-
     return target
 
 

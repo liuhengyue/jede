@@ -43,12 +43,16 @@ def add_poseguide_config(cfg):
 
     _C = cfg
 
+    # some customizations of RPN
+    _C.MODEL.PROPOSAL_GENERATOR.NAME = "PlayerRPN"
+    # disable shuffle for debugging
+    _C.DATALOADER.SHUFFLE = True
     # dataset configurations
     _C.DATASETS.DIGIT_ONLY = True
     _C.DATASETS.NUM_IMAGES = -1 # -1 means all
     _C.DATASETS.TRAIN_VIDEO_IDS = [0,1,3]
     _C.DATASETS.TEST_VIDEO_IDS =[2]
-    _C.DATASETS.NUM_INTERESTS = 3 # we have 3 potential digit locations (L, C, R), also we can have more
+    _C.DATASETS.NUM_INTERESTS = 1 # we have 1 map, or 3 potential digit locations (L, C, R), also we can have more
     _C.DATASETS.NUM_KEYPOINTS = 4 # we only have annotations of 4 keypoints (LS, RS, RH, LH)
     _C.DATASETS.PAD_TO_FULL = True # if true, we use all 17 keypoints, o/w use 4
     _C.DATASETS.KEYPOINTS_INDS = [5, 6, 12, 11] # the indices of keypoints we have in the order wrt COCO
@@ -61,12 +65,14 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES = 10
     _C.MODEL.ROI_DIGIT_HEAD.DEFORMABLE = False
     _C.MODEL.ROI_DIGIT_HEAD.TRANSFORM_DIM = 9 # legacy
+    _C.MODEL.ROI_DIGIT_HEAD.BATCH_DIGIT_SIZE_PER_IMAGE = 256 # number of digit rois to train per image
     _C.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL = 3
     _C.MODEL.ROI_DIGIT_HEAD.NUM_CONV = 5
     _C.MODEL.ROI_DIGIT_HEAD.CONV_DIM = 64
     _C.MODEL.ROI_DIGIT_HEAD.NUM_FC = 0
     _C.MODEL.ROI_DIGIT_HEAD.FC_DIM = 256
     _C.MODEL.ROI_DIGIT_HEAD.NORM = ""
+    _C.MODEL.ROI_DIGIT_HEAD.FOCAL_BIAS = -2.19 # −log((1−pi)/pi), pi=0.1
     # input
     _C.INPUT.RANDOM_FLIP = "none" # we do not flip since it does not make sense to flip a digit
     # augmentation

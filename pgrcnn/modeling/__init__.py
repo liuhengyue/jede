@@ -1,5 +1,5 @@
 from .roi_heads import (
-    PersonROIHeads
+    BaseROIHeads
 )
 from .pg_head import (
     PGROIHeads
@@ -10,6 +10,7 @@ from .meta_arch import (
     META_ARCH_REGISTRY,
     pgrcnn
 )
+from .utils import compute_targets
 
 _EXCLUDE = {"ShapeSpec"}
 __all__ = [k for k in globals().keys() if k not in _EXCLUDE and not k.startswith("_")]

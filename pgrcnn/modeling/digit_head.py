@@ -9,10 +9,9 @@ from torch.nn import functional as F
 from detectron2.config import configurable
 from detectron2.layers import Linear, ShapeSpec, batched_nms, cat, cross_entropy, nonzero_tuple
 from detectron2.modeling.box_regression import Box2BoxTransform
-from detectron2.structures import Boxes
 from detectron2.utils.events import get_event_storage
 from pgrcnn.structures.digitboxes import DigitBoxes
-from pgrcnn.structures.players import Players
+from pgrcnn.structures import Boxes, Players
 
 __all__ = ["fast_rcnn_inference", "DigitOutputLayers"]
 
@@ -308,9 +307,10 @@ class DigitOutputLayers(nn.Module):
                 dim=0,
             )
             # parse classification outputs
-            gt_classes = [cat(p.gt_digit_classes, dim=0) if len(p.gt_digit_classes)
+            gt_classes = [cat(p.gt_digit_classes, dim=0) if p.has("gt_digit_classes")
                           else torch.empty(0, device=proposal_deltas.device, dtype=torch.long) for p in proposals]
-            gt_classes = (cat(gt_classes, dim=0) if len(gt_classes) else torch.empty(0, device=proposal_deltas.device, dtype=torch.long))
+
+            gt_classes = cat(gt_classes, dim=0)
         else:
             proposal_boxes = gt_boxes = torch.empty((0, 4), device=proposal_deltas.device)
             gt_classes = torch.empty(0, device=proposal_deltas.device)
