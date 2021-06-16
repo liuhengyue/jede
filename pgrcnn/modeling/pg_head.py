@@ -248,17 +248,20 @@ class PGROIHeads(BaseROIHeads):
         del targets
 
         if self.training:
-            # proposals or sampled_instances will be modified in-place
-            losses = self._forward_box(features, proposals)
-            # Usually the original proposals used by the box head are used by the mask, keypoint
-            # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
-            # predicted by the box head.
-            losses.update(self._forward_mask(features, proposals))
-            kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
-            losses.update(kpt_loss)
-            losses.update(self._forward_pose_guided(features, sampled_instances))
-            losses.update(self._forward_digit_box(features, sampled_instances))
-            return proposals, losses
+            try:
+                # proposals or sampled_instances will be modified in-place
+                losses = self._forward_box(features, proposals)
+                # Usually the original proposals used by the box head are used by the mask, keypoint
+                # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
+                # predicted by the box head.
+                losses.update(self._forward_mask(features, proposals))
+                kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
+                losses.update(kpt_loss)
+                losses.update(self._forward_pose_guided(features, sampled_instances))
+                losses.update(self._forward_digit_box(features, sampled_instances))
+                return proposals, losses
+            except:
+                raise Exception("something happen.")
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
