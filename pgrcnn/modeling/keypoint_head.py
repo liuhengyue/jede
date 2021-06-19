@@ -44,6 +44,7 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
     keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
         if len(instances_per_image) == 0:
+            sampled_instances.append(instances_per_image)
             continue
         keypoints = instances_per_image.gt_keypoints
         heatmaps_per_image, valid_per_image = keypoints.to_heatmap(

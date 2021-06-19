@@ -248,20 +248,19 @@ class PGROIHeads(BaseROIHeads):
         del targets
 
         if self.training:
-            try:
-                # proposals or sampled_instances will be modified in-place
-                losses = self._forward_box(features, proposals)
-                # Usually the original proposals used by the box head are used by the mask, keypoint
-                # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
-                # predicted by the box head.
-                losses.update(self._forward_mask(features, proposals))
-                kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
-                losses.update(kpt_loss)
+            # proposals or sampled_instances will be modified in-place
+            losses = self._forward_box(features, proposals)
+            # Usually the original proposals used by the box head are used by the mask, keypoint
+            # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
+            # predicted by the box head.
+            losses.update(self._forward_mask(features, proposals))
+            kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
+            losses.update(kpt_loss)
+            # we may not have the instances for further training
+            if len(sampled_instances) and sum([len(ins) for ins in sampled_instances]):
                 losses.update(self._forward_pose_guided(features, sampled_instances))
                 losses.update(self._forward_digit_box(features, sampled_instances))
-                return proposals, losses
-            except:
-                raise Exception("something happen.")
+            return proposals, losses
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
@@ -290,7 +289,7 @@ def gaussian_focal_loss(pred, gaussian_target, alpha=2.0, gamma=4.0, eps=1e-12):
     return pos_loss + neg_loss
 
 
-def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer
+def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer, size_weight=0.1,
                  ):
     """
     Wrap center and size loss here.
@@ -357,6 +356,6 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer
     # pred_scale_logits = pred_scale_logits.view(N, 2, H * W)
     pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
     # we predict the scale wrt. feature box
-    wh_loss = F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+    wh_loss = size_weight * F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
 
     return {'ct_loss': ct_loss, 'wh_loss': wh_loss}

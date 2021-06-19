@@ -3,15 +3,15 @@ MODEL:
   ROI_DIGIT_HEAD:
     NUM_PROPOSAL: 20
 DATASETS:
-  NUM_IMAGES: 1 # change the number of images to load
+  NUM_IMAGES: 2 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
   TEST_VIDEO_IDS: [1]
 INPUT:
   MIN_SIZE_TRAIN: (640,)
   MIN_SIZE_TEST: 640
   CROP:
-    ENABLED: False
-    SIZE: [0.5, 0.9]
+    ENABLED: True
+    SIZE: [0.2, 0.5]
 SOLVER:
   IMS_PER_BATCH: 1
   BASE_LR: 0.0002 # when IMS_PER_BATCH = 16, LR is 0.02

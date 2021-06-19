@@ -133,5 +133,6 @@ def register_jerseynumbers(cfg):
         metadataCat.set(thing_classes=CLASS_NAMES)
         metadataCat.set(keypoint_names=KEYPOINT_NAMES)
         metadataCat.set(keypoint_connection_rules=KEYPOINT_CONNECTION_RULES)
+        metadataCat.set(keypoint_flip_map=()) # no flip map will be used
 
 # register_jerseynumbers()

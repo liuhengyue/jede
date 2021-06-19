@@ -2,9 +2,8 @@ import copy
 import logging
 import numpy as np
 import torch
-from fvcore.common.file_io import PathManager
-from PIL import Image
 
+from detectron2.config import configurable
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from detectron2.data.dataset_mapper import DatasetMapper
@@ -33,42 +32,29 @@ class JerseyNumberDatasetMapper(DatasetMapper):
     3. Prepare data and annotations to Tensor and :class:`Instances`
     """
 
-    def __init__(self, cfg, is_train=True):
-        if cfg.INPUT.CROP.ENABLED and is_train:
-            self.crop_gen = T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE)
-            logging.getLogger(__name__).info("CropGen used in training: " + str(self.crop_gen))
-        else:
-            self.crop_gen = None
-
-        self.tfm_gens = det_utils.build_augmentation(cfg, is_train)
-
+    @configurable
+    def __init__(self, *args, **kwargs):
         # fmt: off
-        self.img_format        = cfg.INPUT.FORMAT
-        self.mask_on           = cfg.MODEL.MASK_ON
-        self.mask_format       = cfg.INPUT.MASK_FORMAT
-        self.keypoint_on       = cfg.MODEL.KEYPOINT_ON
-        self.load_proposals    = cfg.MODEL.LOAD_PROPOSALS
-        self.digit_only        = cfg.DATASETS.DIGIT_ONLY
-        self.num_interests     = cfg.DATASETS.NUM_INTERESTS
-        self.pad_to_full       = cfg.DATASETS.PAD_TO_FULL
-        self.keypoints_inds    = cfg.DATASETS.KEYPOINTS_INDS
+        self.digit_only        = kwargs.pop("digit_only")
+        self.num_interests     = kwargs.pop("num_interests")
+        self.pad_to_full       = kwargs.pop("pad_to_full")
+        self.keypoints_inds    = kwargs.pop("keypoints_inds")
         # fmt: on
-        if self.keypoint_on and is_train:
-            # Flip only makes sense in training
-            # not needed to flip, since the numbers will make no sense
-            self.keypoint_hflip_indices = None
-            # self.keypoint_hflip_indices = utils.create_keypoint_hflip_indices(cfg.DATASETS.TRAIN)
-        else:
-            self.keypoint_hflip_indices = None
+        super().__init__(*args, **kwargs)
 
-        if self.load_proposals:
-            self.min_box_side_len = cfg.MODEL.PROPOSAL_GENERATOR.MIN_SIZE
-            self.proposal_topk = (
-                cfg.DATASETS.PRECOMPUTED_PROPOSAL_TOPK_TRAIN
-                if is_train
-                else cfg.DATASETS.PRECOMPUTED_PROPOSAL_TOPK_TEST
-            )
-        self.is_train = is_train
+    @classmethod
+    def from_config(cls, cfg, is_train: bool = True):
+        ret = super().from_config(cfg, is_train)
+        # our customizations
+        ret.update(
+            {
+                "digit_only": cfg.DATASETS.DIGIT_ONLY,
+                "num_interests": cfg.DATASETS.NUM_INTERESTS,
+                "pad_to_full": cfg.DATASETS.PAD_TO_FULL,
+                "keypoints_inds": cfg.DATASETS.KEYPOINTS_INDS
+            }
+        )
+        return ret
 
     def __call__(self, dataset_dict):
         """
@@ -81,35 +67,17 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
 
         # USER: Write your own image loading if it's not from a file
-        image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
+        image = utils.read_image(dataset_dict["file_name"], format=self.image_format)
         utils.check_image_size(dataset_dict, image)
 
-        if "annotations" not in dataset_dict:
-            image, transforms = T.apply_transform_gens(
-                ([self.crop_gen] if self.crop_gen else []) + self.tfm_gens, image
-            )
-        else:
-            # Crop around an instance if there are instances in the image.
-            # USER: Remove if you don't use cropping
-            if self.crop_gen:
-                crop_tfm = det_utils.gen_crop_transform_with_instance(
-                    self.crop_gen.get_crop_size(image.shape[:2]),
-                    image.shape[:2],
-                    np.random.choice(dataset_dict["annotations"]),
-                )
-                image = crop_tfm.apply_image(image)
-            image, transforms = T.apply_transform_gens(self.tfm_gens, image)
-            if self.crop_gen:
-                transforms = crop_tfm + transforms
-
+        aug_input = T.AugInput(image, sem_seg=None)
+        transforms = self.augmentations(aug_input)
+        image = aug_input.image
         image_shape = image.shape[:2]  # h, w
-
         # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
-        dataset_dict["image"] = torch.as_tensor(
-            image.transpose(2, 0, 1).astype("float32")
-        ).contiguous()
+        dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
 
         if not self.is_train:
             dataset_dict.pop("annotations", None)
@@ -120,9 +88,9 @@ class JerseyNumberDatasetMapper(DatasetMapper):
             # USER: Modify this if you want to keep them for some reason.
             for anno in dataset_dict["annotations"]:
                 anno.pop("digit_labels", None)
-                if not self.mask_on:
+                if not self.use_instance_mask:
                     anno.pop("segmentation", None)
-                if not self.keypoint_on:
+                if not self.use_keypoint:
                     anno.pop("keypoints", None)
 
             # USER: Implement additional transformations if you have other types of data
@@ -138,8 +106,9 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 if obj.get("iscrowd", 0) == 0
             ]
             instances = det_utils.annotations_to_instances(
-                annos, image_shape, mask_format=self.mask_format, digit_only=self.digit_only
+                annos, image_shape, mask_format=self.instance_mask_format, digit_only=self.digit_only
             )
             assert len(instances.get_fields()) == 7, "missing fields for image {}.".format(dataset_dict["file_name"])
             dataset_dict["instances"] = instances
+            # dataset_dict["instances"] = det_utils.filter_empty_instances(instances)
         return dataset_dict

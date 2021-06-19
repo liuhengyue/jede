@@ -3,7 +3,7 @@ import numpy as np
 import pycocotools.mask as mask_util
 import torch
 from fvcore.common.file_io import PathManager
-from PIL import Image, ImageOps
+from PIL import Image
 
 from detectron2.structures import (
     Instances,
@@ -15,11 +15,13 @@ from detectron2.structures import (
     RotatedBoxes,
     polygons_to_bitmask,
 )
+from detectron2.data import transforms as T
+from detectron2.data.detection_utils import transform_keypoint_annotations
+from detectron2.data.catalog import MetadataCatalog
+
 from pgrcnn.structures.boxes import Boxes
 from pgrcnn.structures.players import Players
 from pgrcnn.structures.digitboxes import DigitBoxes
-from detectron2.data import transforms as T
-from detectron2.data.catalog import MetadataCatalog
 from pgrcnn.data import custom_transform_gen as custom_T
 
 # each person will only have at most 2 digits which we pad to
@@ -67,37 +69,17 @@ def transform_instance_annotations(
 
 
     """
+    if isinstance(transforms, (tuple, list)):
+        transforms = T.TransformList(transforms)
     bbox = BoxMode.convert(annotation["person_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
     # Note that bbox is 1d (per-instance bounding box)
-    annotation["person_bbox"] = transforms.apply_box([bbox])[0]
+    annotation["person_bbox"] = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
     annotation["bbox_mode"] = BoxMode.XYXY_ABS
     bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
     # (n, 4) if given an empty list, it will return (0, 4)
-    bbox = transforms.apply_box(bbox)
+    bbox = transforms.apply_box(np.array(bbox)).clip(min=0)
     annotation["digit_bboxes"] = bbox
 
-
-    if "segmentation" in annotation:
-        # each instance contains 1 or more polygons
-        segm = annotation["segmentation"]
-        if isinstance(segm, list):
-            # polygons
-            polygons = [np.asarray(p).reshape(-1, 2) for p in segm]
-            annotation["segmentation"] = [
-                p.reshape(-1) for p in transforms.apply_polygons(polygons)
-            ]
-        elif isinstance(segm, dict):
-            # RLE
-            mask = mask_util.decode(segm)
-            mask = transforms.apply_segmentation(mask)
-            assert tuple(mask.shape[:2]) == image_size
-            annotation["segmentation"] = mask
-        else:
-            raise ValueError(
-                "Cannot transform segmentation of type '{}'!"
-                "Supported types are: polygons as list[list[float] or ndarray],"
-                " COCO-style RLE as a dict.".format(type(segm))
-            )
     # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format
     # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
     # indice: "left_shoulder" 5, "right_shoulder", 6, "left_hip", 11 "right_hip", 12
@@ -115,46 +97,6 @@ def transform_instance_annotations(
     return annotation
 
 
-def transform_keypoint_annotations(keypoints, transforms, image_size, keypoint_hflip_indices=None):
-    """
-    Transform keypoint annotations of an image.
-    If a keypoint is transformed out of image boundary, it will be marked "unlabeled" (visibility=0)
-
-    Args:
-        keypoints (list[float]): Nx3 float in Detectron2's Dataset format.
-            Each point is represented by (x, y, visibility).
-        transforms (TransformList):
-        image_size (tuple): the height, width of the transformed image
-        keypoint_hflip_indices (ndarray[int]): see `create_keypoint_hflip_indices`.
-            When `transforms` includes horizontal flip, will use the index
-            mapping to flip keypoints.
-    """
-    # (N*3,) -> (N, 3)
-    keypoints = np.asarray(keypoints, dtype="float64").reshape(-1, 3)
-    keypoints_xy = transforms.apply_coords(keypoints[:, :2])
-
-    # Set all out-of-boundary points to "unlabeled"
-    inside = (keypoints_xy >= np.array([0, 0])) & (keypoints_xy <= np.array(image_size[::-1]))
-    inside = inside.all(axis=1)
-    keypoints[:, :2] = keypoints_xy
-    keypoints[:, 2][~inside] = 0
-
-    # This assumes that HorizFlipTransform is the only one that does flip
-    do_hflip = sum(isinstance(t, T.HFlipTransform) for t in transforms.transforms) % 2 == 1
-
-    # Alternative way: check if probe points was horizontally flipped.
-    # probe = np.asarray([[0.0, 0.0], [image_width, 0.0]])
-    # probe_aug = transforms.apply_coords(probe.copy())
-    # do_hflip = np.sign(probe[1][0] - probe[0][0]) != np.sign(probe_aug[1][0] - probe_aug[0][0])  # noqa
-
-    # If flipped, swap each keypoint with its opposite-handed equivalent
-    if do_hflip:
-        assert keypoint_hflip_indices is not None
-        keypoints = keypoints[np.asarray(keypoint_hflip_indices, dtype=np.int32), :]
-
-    # Maintain COCO convention that if visibility == 0 (unlabeled), then x, y = 0
-    keypoints[keypoints[:, 2] == 0] = 0
-    return keypoints
 
 
 def annotations_to_instances(annos, image_size, mask_format="polygon", digit_only=False, pad=False):
@@ -182,171 +124,74 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
                     gt_digits      (N, 2, 1)
                     gt_digit_centers (N, 3, 3) order: center, right, left
                     gt_digit_scales (N, 2, 2)
-                k in [0, 2]
 
-            if not pad:
-            Instances:
-                'fields':
-                    gt_boxes       (N, 4)
-                    gt_classes     (N)
-                    gt_keypoints   (N, 4, 3)
-                    gt_digit_boxes (N, M, 4)
-                    gt_digits      (N, M, 1)
-                    gt_digit_centers (N, M, 2)
-                    gt_digit_scales (N, M, 2)
-                k in [0, 2]
 
 
     """
     if digit_only:
-        if pad:
-            target = Instances(image_size)
-            boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-            # remove padded boxes
-            boxes = np.concatenate([box[np.any(box > 0, axis=1)] for box in boxes])
-            boxes = target.gt_boxes = Boxes(boxes)
-            boxes.clip(image_size)
-            classes = np.concatenate([obj["digit_ids"][np.where(obj["digit_ids"] > -1)] for obj in annos])
-            # ids are solved by cfg in datatset
-            classes = torch.tensor(classes, dtype=torch.int64).view(-1)
-            target.gt_classes = classes
-            return target
-        else:
-            # todo: implement this
-            pass
+        target = Instances(image_size)
+        boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
+        # remove padded boxes
+        boxes = np.concatenate([box[np.any(box > 0, axis=1)] for box in boxes])
+        boxes = target.gt_boxes = Boxes(boxes)
+        boxes.clip(image_size)
+        classes = np.concatenate([obj["digit_ids"][np.where(obj["digit_ids"] > -1)] for obj in annos])
+        # ids are solved by cfg in datatset
+        classes = torch.tensor(classes, dtype=torch.int64).view(-1)
+        target.gt_classes = classes
+        return target
+
     target = Players(image_size)
     # person bboxes
     boxes = [BoxMode.convert(obj["person_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-    boxes = target.gt_boxes = Boxes(boxes)
+    boxes = Boxes(boxes)
     boxes.clip(image_size)
+    # we may have empty after cropping
+    keep = boxes.nonempty()
+    target.gt_boxes = boxes[keep]
+    keep_inds = keep.nonzero(as_tuple=True)[0]
+    # better to just select the kept annos
+    annos = [annos[keep_idx] for keep_idx in keep_inds]
     classes = [obj["category_id"] for obj in annos]
     classes = torch.tensor(classes, dtype=torch.int64)
     target.gt_classes = classes
-    if pad:
-        # digit bbox list of [[],[]]
-        boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-        boxes = target.gt_digit_boxes = DigitBoxes(boxes)
-        boxes.clip(image_size)
 
-        # digit classes (list obj), it should have the same first dim with person classes
-        classes = [obj["digit_ids"] for obj in annos]
-        classes = torch.tensor(classes, dtype=torch.int64)
-        target.gt_digit_classes = classes
-        # add centers and scales
-        digit_centers = [obj["digit_centers"] for obj in annos]
-        digit_scales = [obj["digit_scales"] for obj in annos]
-        target.gt_digit_centers = Keypoints(digit_centers)
-        target.gt_digit_scales = torch.tensor(digit_scales, dtype=torch.float32)
-    else:
-        boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-        boxes = target.gt_digit_boxes = [Boxes(box) for box in boxes]
-        for box in boxes:
-            box.clip(image_size)
-        classes = [obj["digit_ids"] for obj in annos]
-        classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
-        target.gt_digit_classes = classes
-        # add centers and scales
-        # target.gt_digit_centers = [torch.cat((box.get_centers(), torch.ones((len(box), 1))), dim=1).unsqueeze(1) for box in boxes]
-        target.gt_digit_centers = [box.get_centers() for box in boxes]
-        target.gt_digit_scales = [box.get_scales() for box in boxes]
-        # digit_ct_classes = [obj["digit_ct_classes"] for obj in annos]
-        # target.gt_digit_centers = [torch.tensor(digit_center, dtype=torch.float32) \
-        #                            for digit_center in digit_centers]
-        # target.gt_digit_scales = [torch.tensor(digit_scale, dtype=torch.float32) \
-        #                           for digit_scale in digit_scales]
-        # target.gt_digit_ct_classes = [torch.tensor(digit_ct_class, dtype=torch.int64) \
-        #                               for digit_ct_class in digit_ct_classes]
-    if len(annos) and "segmentation" in annos[0]:
-        segms = [obj["segmentation"] for obj in annos]
-        if mask_format == "polygon":
-            masks = PolygonMasks(segms)
-        else:
-            assert mask_format == "bitmask", mask_format
-            masks = []
-            for segm in segms:
-                if isinstance(segm, list):
-                    # polygon
-                    masks.append(polygons_to_bitmask(segm, *image_size))
-                elif isinstance(segm, dict):
-                    # COCO RLE
-                    masks.append(mask_util.decode(segm))
-                elif isinstance(segm, np.ndarray):
-                    assert segm.ndim == 2, "Expect segmentation of 2 dimensions, got {}.".format(
-                        segm.ndim
-                    )
-                    # mask array
-                    masks.append(segm)
-                else:
-                    raise ValueError(
-                        "Cannot convert segmentation of type '{}' to BitMasks!"
-                        "Supported types are: polygons as list[list[float] or ndarray],"
-                        " COCO-style RLE as a dict, or a full-image segmentation mask "
-                        "as a 2D ndarray.".format(type(segm))
-                    )
-            masks = BitMasks(torch.stack([torch.from_numpy(x) for x in masks]))
-        target.gt_masks = masks
+    boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
+    # if the person is filtered out, then its digit boxes should be fitlered out
+    boxes = target.gt_digit_boxes = [Boxes(box) for box in boxes]
+    classes = [obj["digit_ids"] for obj in annos]
+    classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
+    for i, (box, label) in enumerate(zip(boxes, classes)):
+        boxes[i].clip(image_size)
+        keep = box.nonempty()
+        boxes[i] = box[keep]
+        classes[i] = label[keep]
+
+    target.gt_digit_classes = classes
+    # add centers and scales
+    target.gt_digit_centers = [box.get_centers() for box in boxes]
+    target.gt_digit_scales = [box.get_scales() for box in boxes]
+
     # not every instance has the keypoints annotation, so we pad it
     kpts = [obj.get("keypoints", []) for obj in annos]
     target.gt_keypoints = Keypoints(kpts)
     return target
 
 
-def annotations_to_instances_rotated(annos, image_size):
+
+def filter_empty_instances(instances, box_threshold=1e-5):
     """
-    Create an :class:`Instances` object used by the models,
-    from instance annotations in the dataset dict.
-    Compared to `annotations_to_instances`, this function is for rotated boxes only
-
-    Args:
-        annos (list[dict]): a list of instance annotations in one image, each
-            element for one instance.
-        image_size (tuple): height, width
-
-    Returns:
-        Instances:
-            Containing fields "gt_boxes", "gt_classes",
-            if they can be obtained from `annos`.
-            This is the format that builtin models expect.
-    """
-    boxes = [obj["person_bbox"] for obj in annos]
-    target = Instances(image_size)
-    boxes = target.gt_boxes = RotatedBoxes(boxes)
-    boxes.clip(image_size)
-
-    classes = [obj["category_id"] for obj in annos]
-    classes = torch.tensor(classes, dtype=torch.int64)
-    target.gt_classes = classes
-
-    return target
-
-
-def filter_empty_instances(instances, by_box=True, by_mask=True):
-    """
-    Filter out empty instances in an `Instances` object.
+    Filter out empty instances in an `Instances` object (by bounding box)
 
     Args:
         instances (Instances):
-        by_box (bool): whether to filter out instances with empty boxes
-        by_mask (bool): whether to filter out instances with empty masks
+        box_threshold (float): minimum width and height to be considered non-empty
 
     Returns:
         Instances: the filtered instances.
     """
-    assert by_box or by_mask
-    r = []
-    if by_box:
-        r.append(instances.gt_boxes.nonempty())
-    if instances.has("gt_masks") and by_mask:
-        r.append(instances.gt_masks.nonempty())
 
-    # TODO: can also filter visible keypoints
-
-    if not r:
-        return instances
-    m = r[0]
-    for x in r[1:]:
-        m = m & x
-    return instances[m]
+    return instances[instances.gt_boxes.nonempty(threshold=box_threshold)]
 
 
 def gen_crop_transform_with_instance(crop_size, image_size, instance):

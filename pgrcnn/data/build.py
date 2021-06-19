@@ -15,13 +15,13 @@ from detectron2.utils.comm import get_world_size
 from detectron2.utils.env import seed_all_rng
 from detectron2.utils.logger import log_first_n
 
-from detectron2.data import samplers
 from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
 from detectron2.data.common import AspectRatioGroupedDataset, DatasetFromList, MapDataset
 from detectron2.data.detection_utils import check_metadata_consistency
 from detectron2.data.build import get_detection_dataset_dicts, worker_init_reset_seed, trivial_batch_collator,\
 load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_images_with_few_keypoints
-from pgrcnn.data.mapper import JerseyNumberDatasetMapper
+from detectron2.data.samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
+from pgrcnn.data.dataset_mapper import JerseyNumberDatasetMapper
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
     A data loader is created by the following steps:
@@ -135,8 +135,7 @@ def build_detection_train_loader(cfg, mapper=None):
         cfg.DATASETS.TRAIN,
         filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
         min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
-        if cfg.MODEL.KEYPOINT_ON
-        else 0,
+        if cfg.MODEL.KEYPOINT_ON else 0,
         proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
     )
     dataset = DatasetFromList(dataset_dicts, copy=False)
@@ -149,11 +148,12 @@ def build_detection_train_loader(cfg, mapper=None):
     logger = logging.getLogger(__name__)
     logger.info("Using training sampler {}".format(sampler_name))
     if sampler_name == "TrainingSampler":
-        sampler = samplers.TrainingSampler(len(dataset), shuffle=cfg.DATALOADER.SHUFFLE)
+        sampler = TrainingSampler(len(dataset), shuffle=cfg.DATALOADER.SHUFFLE)
     elif sampler_name == "RepeatFactorTrainingSampler":
-        sampler = samplers.RepeatFactorTrainingSampler(
+        repeat_factors = RepeatFactorTrainingSampler.repeat_factors_from_category_frequency(
             dataset_dicts, cfg.DATALOADER.REPEAT_THRESHOLD
         )
+        sampler = RepeatFactorTrainingSampler(repeat_factors)
     else:
         raise ValueError("Unknown training sampler: {}".format(sampler_name))
 
@@ -215,7 +215,7 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
         mapper = JerseyNumberDatasetMapper(cfg, False)
     dataset = MapDataset(dataset, mapper)
 
-    sampler = samplers.InferenceSampler(len(dataset))
+    sampler = InferenceSampler(len(dataset))
     # Always use 1 image per worker during inference since this is the
     # standard when reporting inference time in papers.
     batch_sampler = torch.utils.data.sampler.BatchSampler(sampler, 1, drop_last=False)

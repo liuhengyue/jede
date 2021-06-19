@@ -59,6 +59,8 @@ def add_poseguide_config(cfg):
 
     _C.MODEL.ROI_HEADS.NAME = "PGROIHeads"
 
+    _C.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE = 0 # we can train without keypoints
+
     _C.MODEL.ROI_DIGIT_HEAD = CN()
     _C.MODEL.ROI_DIGIT_HEAD.NAME = "Kpts2DigitHead"
     _C.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES = True
@@ -72,7 +74,7 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_HEAD.NUM_FC = 0
     _C.MODEL.ROI_DIGIT_HEAD.FC_DIM = 256
     _C.MODEL.ROI_DIGIT_HEAD.NORM = ""
-    _C.MODEL.ROI_DIGIT_HEAD.FOCAL_BIAS = -2.19 # −log((1−pi)/pi), pi=0.1
+    _C.MODEL.ROI_DIGIT_HEAD.FOCAL_BIAS = -2.19 # −log((1−pi)/pi), pi=0.1 -> -2.19
     # input
     _C.INPUT.RANDOM_FLIP = "none" # we do not flip since it does not make sense to flip a digit
     # augmentation

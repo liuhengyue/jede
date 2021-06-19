@@ -396,11 +396,12 @@ class BaseROIHeads(StandardROIHeads):
             instances, _ = select_foreground_proposals(instances, self.num_classes)
             # head is only trained on positive proposals with >=1 visible keypoints,
             # may not needed
-            # instances = select_proposals_with_visible_keypoints(instances)
+            instances = select_proposals_with_visible_keypoints(instances)
 
         if self.keypoint_pooler is not None:
             features = [features[f] for f in self.keypoint_in_features]
             boxes = [x.proposal_boxes if self.training else x.pred_boxes for x in instances]
+            # if boxes is an empty list, we get a zero tensor on cpu!
             features = self.keypoint_pooler(features, boxes)
         else:
             features = {f: features[f] for f in self.keypoint_in_features}

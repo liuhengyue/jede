@@ -1,7 +1,7 @@
 import logging
 import cv2
 from detectron2.engine import default_argument_parser
-from pgrcnn.data.mapper import JerseyNumberDatasetMapper
+from pgrcnn.data.dataset_mapper import JerseyNumberDatasetMapper
 from pgrcnn.data.build import build_detection_train_loader
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from detectron2.data import MetadataCatalog
