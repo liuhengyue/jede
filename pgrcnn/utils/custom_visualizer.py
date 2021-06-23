@@ -13,7 +13,7 @@ import pycocotools.mask as mask_util
 import torch
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
-from detectron2.structures import BitMasks, Boxes, BoxMode, Keypoints, PolygonMasks, RotatedBoxes
+from detectron2.structures import BitMasks, BoxMode, Keypoints, PolygonMasks, RotatedBoxes
 
 from detectron2.utils.colormap import random_color, colormap
 
@@ -21,6 +21,7 @@ from detectron2.utils.visualizer import Visualizer, ColorMode
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
 from detectron2.data import DatasetCatalog, MetadataCatalog
 
+from pgrcnn.structures import Boxes
 from pgrcnn.data.dataset_mapper import DatasetMapper
 from pgrcnn.data.build import build_sequential_dataloader
 logger = logging.getLogger(__name__)
@@ -51,8 +52,8 @@ class JerseyNumberVisualizer(Visualizer):
             instances_list.append({
             "person_bbox": instance.gt_boxes.tensor.numpy(),
             "keypoints": instance.gt_keypoints.tensor.numpy() if hasattr(instance, 'gt_keypoints') else None,
-            "digit_bboxes": instance.gt_digit_boxes.tensor.squeeze_().numpy() if hasattr(instance, 'gt_digit_boxes') else None,
-            "digit_ids": instance.gt_digit_classes.squeeze_().numpy() if hasattr(instance, 'gt_digit_classes') else None,
+            "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if hasattr(instance, 'gt_digit_boxes') else None,
+            "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if hasattr(instance, 'gt_digit_classes') else None,
             "category_id": instance.gt_classes.squeeze_().numpy()
             })
         return {"annotations": instances_list}

@@ -16,11 +16,13 @@ from detectron2.utils.env import seed_all_rng
 from detectron2.utils.logger import log_first_n
 
 from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
-from detectron2.data.common import AspectRatioGroupedDataset, DatasetFromList, MapDataset
+from detectron2.data.common import AspectRatioGroupedDataset, DatasetFromList
 from detectron2.data.detection_utils import check_metadata_consistency
 from detectron2.data.build import get_detection_dataset_dicts, worker_init_reset_seed, trivial_batch_collator,\
 load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_images_with_few_keypoints
 from detectron2.data.samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
+
+from pgrcnn.data import MapDataset
 from pgrcnn.data.dataset_mapper import JerseyNumberDatasetMapper
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
@@ -134,15 +136,14 @@ def build_detection_train_loader(cfg, mapper=None):
     dataset_dicts = get_detection_dataset_dicts(
         cfg.DATASETS.TRAIN,
         filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
-        min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
-        if cfg.MODEL.KEYPOINT_ON else 0,
+        min_keypoints=0, # do not filter images without keypoints
         proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
     )
     dataset = DatasetFromList(dataset_dicts, copy=False)
 
     if mapper is None:
         mapper = JerseyNumberDatasetMapper(cfg, True)
-    dataset = MapDataset(dataset, mapper)
+    dataset = MapDataset(dataset, mapper, copy_paste_mix=cfg.INPUT.AUG.COPY_PASTE_MIX)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
     logger = logging.getLogger(__name__)

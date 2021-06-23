@@ -22,7 +22,7 @@ from detectron2.data.catalog import MetadataCatalog
 from pgrcnn.structures.boxes import Boxes
 from pgrcnn.structures.players import Players
 from pgrcnn.structures.digitboxes import DigitBoxes
-from pgrcnn.data import custom_transform_gen as custom_T
+from pgrcnn.data import augmentation_impl as custom_T
 
 # each person will only have at most 2 digits which we pad to
 MAX_DIGIT_PER_INSTANCE = 2
@@ -99,7 +99,11 @@ def transform_instance_annotations(
 
 
 
-def annotations_to_instances(annos, image_size, mask_format="polygon", digit_only=False, pad=False):
+def annotations_to_instances(annos,
+                             image_size,
+                             digit_only=False,
+                             num_keypoints=17
+                             ):
     """
     Create an :class:`Instances` object used by the models,
     from instance annotations in the dataset dict.
@@ -173,7 +177,7 @@ def annotations_to_instances(annos, image_size, mask_format="polygon", digit_onl
     target.gt_digit_scales = [box.get_scales() for box in boxes]
 
     # not every instance has the keypoints annotation, so we pad it
-    kpts = [obj.get("keypoints", []) for obj in annos]
+    kpts = [obj.get("keypoints", np.zeros((num_keypoints, 3))) for obj in annos]
     target.gt_keypoints = Keypoints(kpts)
     return target
 
@@ -247,6 +251,7 @@ def check_metadata_consistency(key, dataset_names):
             raise ValueError("Datasets have different metadata '{}'!".format(key))
 
 
+
 def build_augmentation(cfg, is_train):
     """
     Create a list of :class:`TransformGen` from config.
@@ -268,22 +273,20 @@ def build_augmentation(cfg, is_train):
             len(min_size)
         )
 
-    logger = logging.getLogger(__name__)
-    tfm_gens = []
-    # tfm_gens.append(T.RandomExtent((1, 5), (0.9, 0.9)))
-    tfm_gens.append(T.ResizeShortestEdge(min_size, max_size, sample_style))
-    # tfm_gens.append(T.RandomBrightness(0.2, 1.8))
+    augmentation = [T.ResizeShortestEdge(min_size, max_size, sample_style)]
+    # augmentation = []
     assert cfg.INPUT.RANDOM_FLIP == "none", "For jersey number, it does not make sense to do flipping."
+    # we could use grayscale images for both training and testing
     if cfg.INPUT.AUG.GRAYSCALE:
-        tfm_gens.append(custom_T.ConvertGrayscale())
+        augmentation.append(custom_T.ConvertGrayscale())
     if is_train:
         if cfg.INPUT.AUG.COLOR:
             # tfm_gens.append(T.RandomLighting(scale=10.0))
-            tfm_gens.append(T.RandomBrightness(0.5, 1.5))
-            tfm_gens.append(T.RandomSaturation(0.5, 1.5))
-            tfm_gens.append(T.RandomContrast(0.5, 1.5))
+            augmentation.append(T.RandomBrightness(0.5, 1.5))
+            augmentation.append(T.RandomSaturation(0.5, 1.5))
+            augmentation.append(T.RandomContrast(0.5, 1.5))
 
         if cfg.INPUT.AUG.EXTEND:
-            tfm_gens.append(T.RandomExtent((1.2, 2.0), (0.4, 0.4)))
-        logger.info("TransformGens used in training: " + str(tfm_gens))
-    return tfm_gens
+            augmentation.append(T.RandomExtent((1.2, 2.0), (0.4, 0.4)))
+
+    return augmentation

@@ -82,3 +82,5 @@ def add_poseguide_config(cfg):
     _C.INPUT.AUG.COLOR = False
     _C.INPUT.AUG.GRAYSCALE = False
     _C.INPUT.AUG.EXTEND = False
+
+    _C.INPUT.AUG.COPY_PASTE_MIX = 0 # 0 means do not apply, otherwise the number of images to add

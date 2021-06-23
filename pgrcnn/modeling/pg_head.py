@@ -356,6 +356,6 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
     # pred_scale_logits = pred_scale_logits.view(N, 2, H * W)
     pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
     # we predict the scale wrt. feature box
-    wh_loss = size_weight * F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+    wh_loss = size_weight * F.l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
 
     return {'ct_loss': ct_loss, 'wh_loss': wh_loss}

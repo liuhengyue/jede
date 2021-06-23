@@ -5,7 +5,9 @@ from pgrcnn.data.dataset_mapper import JerseyNumberDatasetMapper
 from pgrcnn.data.build import build_detection_train_loader
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from detectron2.data import MetadataCatalog
+
 from pgrcnn.utils.launch_utils import setup
+
 logger = logging.getLogger("pgrcnn")
 
 
@@ -36,15 +38,9 @@ def visualize_training(batched_inputs, cfg):
         vis_img = v_gt.get_image()
         return input['file_name'], vis_img
 
-if __name__ == "__main__":
-    args = default_argument_parser().parse_args()
-    # lazy add config file
-    args.config_file = "configs/pg_rcnn/pg_rcnn_test.yaml"
-    # args.config_file = "../../configs/faster_rcnn_R_50_FPN_3x.yaml"
-    cfg = setup(args)
+def test_base_dataloader(cfg, show_data=False):
     dataloader = build_detection_train_loader(cfg, mapper=JerseyNumberDatasetMapper(cfg, True))
 
-    show_data = False
     for data in dataloader:
         try:
             logger.info(f"{data[0]['file_name']}")
@@ -57,3 +53,13 @@ if __name__ == "__main__":
                     break
         except:
             raise Exception(f"Error when processing {data[0]['file_name']}")
+
+
+if __name__ == "__main__":
+    args = default_argument_parser().parse_args()
+    # lazy add config file
+    args.config_file = "configs/pg_rcnn/pg_rcnn_test_single_video.yaml"
+    # args.config_file = "configs/pg_rcnn/pg_rcnn_test.yaml"
+    # args.config_file = "../../configs/faster_rcnn_R_50_FPN_3x.yaml"
+    cfg = setup(args)
+    test_base_dataloader(cfg, show_data=True)

@@ -7,7 +7,8 @@ from detectron2.config import configurable
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from detectron2.data.dataset_mapper import DatasetMapper
-from pgrcnn.data import det_utils
+from . import det_utils
+from . import copy_paste_mix_images
 
 """
 This file contains the default mapping that's applied to "dataset dicts".
@@ -39,6 +40,9 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         self.num_interests     = kwargs.pop("num_interests")
         self.pad_to_full       = kwargs.pop("pad_to_full")
         self.keypoints_inds    = kwargs.pop("keypoints_inds")
+        self.copy_paste_mix    = kwargs.pop("copy_paste_mix")
+        self.max_size_train    = kwargs.pop("max_size_train")
+
         # fmt: on
         super().__init__(*args, **kwargs)
 
@@ -46,23 +50,36 @@ class JerseyNumberDatasetMapper(DatasetMapper):
     def from_config(cls, cfg, is_train: bool = True):
         ret = super().from_config(cfg, is_train)
         # our customizations
+        augs = det_utils.build_augmentation(cfg, is_train)
+        if cfg.INPUT.CROP.ENABLED and is_train:
+            augs.insert(0, T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
         ret.update(
             {
                 "digit_only": cfg.DATASETS.DIGIT_ONLY,
                 "num_interests": cfg.DATASETS.NUM_INTERESTS,
                 "pad_to_full": cfg.DATASETS.PAD_TO_FULL,
-                "keypoints_inds": cfg.DATASETS.KEYPOINTS_INDS
+                "keypoints_inds": cfg.DATASETS.KEYPOINTS_INDS,
+                # update augmentations
+                "augmentations": augs,
+                "copy_paste_mix": cfg.INPUT.AUG.COPY_PASTE_MIX,
+                "max_size_train": cfg.INPUT.MAX_SIZE_TRAIN
             }
         )
         return ret
 
     def __call__(self, dataset_dict):
-        """
-        Args:
-            dataset_dict (dict): Metadata of one image, in Detectron2 Dataset format.
+        if isinstance(dataset_dict, dict):
+            return self._process_single_dataset_dict(dataset_dict)
+        elif isinstance(dataset_dict, list):
+            return self._process_multiple_dataset_dicts(dataset_dict)
 
-        Returns:
-            dict: a format that builtin models in detectron2 accept
+    def _process_single_dataset_dict(self, dataset_dict):
+        """
+            Args:
+                dataset_dict (dict): Metadata of one image, in Detectron2 Dataset format.
+
+            Returns:
+                dict: a format that builtin models in detectron2 accept
         """
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
 
@@ -106,9 +123,69 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 if obj.get("iscrowd", 0) == 0
             ]
             instances = det_utils.annotations_to_instances(
-                annos, image_shape, mask_format=self.instance_mask_format, digit_only=self.digit_only
+                annos, image_shape, digit_only=self.digit_only
             )
             assert len(instances.get_fields()) == 7, "missing fields for image {}.".format(dataset_dict["file_name"])
             dataset_dict["instances"] = instances
             # dataset_dict["instances"] = det_utils.filter_empty_instances(instances)
         return dataset_dict
+
+    def _process_multiple_dataset_dicts(self, dataset_dicts):
+        """
+            Args:
+                dataset_dicts (List[dict]): Metadata of multiple images, in Detectron2 Dataset format.
+
+            Returns:
+                dict: a format that builtin models in detectron2 accept
+        """
+        if self.copy_paste_mix:
+            dataset_dicts = copy.deepcopy(dataset_dicts)  # it will be modified by code below
+            dataset_dict = copy_paste_mix_images(dataset_dicts,
+                                                 format=self.image_format,
+                                                 max_size=self.max_size_train)
+            image = dataset_dict["image"]
+            aug_input = T.AugInput(image, sem_seg=None)
+            transforms = self.augmentations(aug_input)
+            image = aug_input.image
+            image_shape = image.shape[:2]  # h, w
+            # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
+            # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
+            # Therefore it's important to use torch.Tensor.
+            dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+
+            if not self.is_train:
+                dataset_dict.pop("annotations", None)
+                dataset_dict.pop("sem_seg_file_name", None)
+                return dataset_dict
+
+            if "annotations" in dataset_dict:
+                # USER: Modify this if you want to keep them for some reason.
+                for anno in dataset_dict["annotations"]:
+                    anno.pop("digit_labels", None)
+                    if not self.use_instance_mask:
+                        anno.pop("segmentation", None)
+                    if not self.use_keypoint:
+                        anno.pop("keypoints", None)
+
+                # USER: Implement additional transformations if you have other types of data
+                annos = [
+                    det_utils.transform_instance_annotations(
+                        obj, transforms, image_shape,
+                        keypoint_hflip_indices=self.keypoint_hflip_indices,
+                        num_interests=self.num_interests,
+                        pad_to_full=self.pad_to_full,
+                        keypoints_inds=self.keypoints_inds
+                    )
+                    for obj in dataset_dict.pop("annotations")
+                    if obj.get("iscrowd", 0) == 0
+                ]
+                instances = det_utils.annotations_to_instances(
+                    annos, image_shape, digit_only=self.digit_only
+                )
+                assert len(instances.get_fields()) == 7, "missing fields for image {}.".format(
+                    dataset_dict["file_name"])
+                dataset_dict["instances"] = instances
+                # dataset_dict["instances"] = det_utils.filter_empty_instances(instances)
+            return dataset_dict
+        else:
+           raise NotImplementedError("Reached a wrong place.")

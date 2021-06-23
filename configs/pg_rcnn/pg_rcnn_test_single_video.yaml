@@ -5,14 +5,16 @@ MODEL:
 DATASETS:
   NUM_IMAGES: -1 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
-  TEST_VIDEO_IDS: [0,2,3]
+  TEST_VIDEO_IDS: [1]
 INPUT:
   CROP:
-    ENABLED: True
+    ENABLED: False
     SIZE: [0.5, 0.9]
-#  MIN_SIZE_TRAIN: (640, )
+  AUG:
+    EXTEND: False
+    COPY_PASTE_MIX: 22
 SOLVER:
-  IMS_PER_BATCH: 4
+  IMS_PER_BATCH: 1
   BASE_LR: 0.0001 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (15000, )
   MAX_ITER: 20000
@@ -21,5 +23,5 @@ SOLVER:
   CHECKPOINT_PERIOD: 5000
 DATALOADER:
   SHUFFLE: False
-  NUM_WORKERS: 4
+  NUM_WORKERS: 1
 OUTPUT_DIR: ./output/pg_rcnn/test_single_video/
