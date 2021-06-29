@@ -21,9 +21,10 @@ from detectron2.data.detection_utils import check_metadata_consistency
 from detectron2.data.build import get_detection_dataset_dicts, worker_init_reset_seed, trivial_batch_collator,\
 load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_images_with_few_keypoints
 from detectron2.data.samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
+from detectron2.data import DatasetMapper
 
-from pgrcnn.data import MapDataset
-from pgrcnn.data.dataset_mapper import JerseyNumberDatasetMapper
+from pgrcnn.data import MapDataset, JerseyNumberDatasetMapper, WeightedTrainingSampler
+
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
     A data loader is created by the following steps:
@@ -133,7 +134,7 @@ def build_detection_train_loader(cfg, mapper=None):
     )
     images_per_worker = images_per_batch // num_workers
 
-    dataset_dicts = get_detection_dataset_dicts(
+    dataset_dicts, (weights, applicable_dict, applicable_inds) = get_detection_dataset_dicts(
         cfg.DATASETS.TRAIN,
         filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
         min_keypoints=0, # do not filter images without keypoints
@@ -143,7 +144,11 @@ def build_detection_train_loader(cfg, mapper=None):
 
     if mapper is None:
         mapper = JerseyNumberDatasetMapper(cfg, True)
-    dataset = MapDataset(dataset, mapper, copy_paste_mix=cfg.INPUT.AUG.COPY_PASTE_MIX)
+
+    dataset = MapDataset(dataset, mapper,
+                         copy_paste_mix=cfg.INPUT.AUG.COPY_PASTE_MIX,
+                         applicable_dict=applicable_dict,
+                         applicable_inds=applicable_inds)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
     logger = logging.getLogger(__name__)
@@ -155,6 +160,8 @@ def build_detection_train_loader(cfg, mapper=None):
             dataset_dicts, cfg.DATALOADER.REPEAT_THRESHOLD
         )
         sampler = RepeatFactorTrainingSampler(repeat_factors)
+    elif sampler_name == "WeightedTrainingSampler":
+        sampler = WeightedTrainingSampler(weights, len(dataset), replacement=False)
     else:
         raise ValueError("Unknown training sampler: {}".format(sampler_name))
 
@@ -201,7 +208,7 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
         DataLoader: a torch DataLoader, that loads the given detection
         dataset, with test-time transformation and batching.
     """
-    dataset_dicts = get_detection_dataset_dicts(
+    dataset_dicts, _, = get_detection_dataset_dicts(
         [dataset_name],
         filter_empty=False,
         proposal_files=[
@@ -292,6 +299,7 @@ def get_detection_dataset_dicts(
     """
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
+
     for dataset_name, dicts in zip(dataset_names, dataset_dicts):
         assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
 
@@ -303,22 +311,51 @@ def get_detection_dataset_dicts(
             for dataset_i_dicts, proposal_file in zip(dataset_dicts, proposal_files)
         ]
 
+    weights = []
+    applicables = {}
+    jerseynumber_inds = []
+    start_ind = 0
+
+    for i, dicts in enumerate(dataset_dicts):
+        has_instances = "annotations" in dicts[0]
+        # Keep images without instance-level GT if the dataset has semantic labels.
+        if filter_empty and has_instances and "sem_seg_file_name" not in dicts[0]:
+            dataset_dicts[i] = filter_images_with_only_crowd_annotations(dicts)
+
+        if min_keypoints > 0 and has_instances:
+            dataset_dicts[i] = filter_images_with_few_keypoints(dicts, min_keypoints)
+
+        if has_instances:
+            try:
+                class_names = MetadataCatalog.get(dataset_names[i]).thing_classes
+                # check_metadata_consistency("thing_classes", dataset_names)
+                print_instances_class_histogram(dataset_dicts[i], class_names)
+            except AttributeError:  # class names are not available for this dataset
+                pass
+            # get the mapping from data index to the weight probability, and dataset source
+            # record if the data can be applied with CopyPasteMix
+            has_jerseynumber = ('digit_bboxes' in dicts[0]['annotations'][0]) and ('person_bbox' in dicts[0]['annotations'][0])
+            for j, dataset_dict in enumerate(dataset_dicts[i]):
+                applicables[start_ind + j] = has_jerseynumber
+                weights.append( 1 / (len(dataset_dicts) * len(dataset_dicts[i])) )
+                if has_jerseynumber:
+                    jerseynumber_inds.append(start_ind + j)
+            start_ind += len(dataset_dicts[i])
+
+    #
+    # weight_per_dataset = [(1 / len(dataset_lengths)) * (1 / n) for n in dataset_lengths]
+    # dataset_lengths.insert(0, 0)
+    # dataset_lengths = np.cumsum(dataset_lengths)
+    # weights = [weight_per_dataset[i-1] for i in range(1, len(dataset_lengths)) for _ in range(dataset_lengths[i-1], dataset_lengths[i])]
+    #
+    # #
+    # COPY_PASTE_MIXABLE = ('jerseynumbers_train', 'svhn_train')
+    # check_applicable = [dataset_name in COPY_PASTE_MIXABLE for dataset_name in dataset_names]
+    # applicables = {j: check_applicable[i-1] for i in range(1, len(dataset_lengths)) for j in range(dataset_lengths[i-1], dataset_lengths[i])}
+
     dataset_dicts = list(itertools.chain.from_iterable(dataset_dicts))
 
-    has_instances = "annotations" in dataset_dicts[0]
-    # Keep images without instance-level GT if the dataset has semantic labels.
-    if filter_empty and has_instances and "sem_seg_file_name" not in dataset_dicts[0]:
-        dataset_dicts = filter_images_with_only_crowd_annotations(dataset_dicts)
+    return dataset_dicts, (weights, applicables, jerseynumber_inds)
 
-    if min_keypoints > 0 and has_instances:
-        dataset_dicts = filter_images_with_few_keypoints(dataset_dicts, min_keypoints)
-
-    if has_instances:
-        try:
-            class_names = MetadataCatalog.get(dataset_names[0]).thing_classes
-            check_metadata_consistency("thing_classes", dataset_names)
-            print_instances_class_histogram(dataset_dicts, class_names)
-        except AttributeError:  # class names are not available for this dataset
-            pass
-    return dataset_dicts
-
+def get_sample_weights(dataset_dicts):
+    pass

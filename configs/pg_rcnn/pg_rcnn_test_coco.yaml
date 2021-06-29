@@ -3,7 +3,9 @@ MODEL:
   ROI_DIGIT_HEAD:
     NUM_PROPOSAL: 20
 DATASETS:
-  NUM_IMAGES: 1 # change the number of images to load
+  TRAIN: ("keypoints_coco_2017_val_100", "jerseynumbers_train") #
+  TEST: ("keypoints_coco_2017_val_100",)
+  NUM_IMAGES: 200 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
   TEST_VIDEO_IDS: [1]
 INPUT:
@@ -12,7 +14,7 @@ INPUT:
   AUG:
     COPY_PASTE_MIX: 22
 SOLVER:
-  IMS_PER_BATCH: 1
+  IMS_PER_BATCH: 2
   BASE_LR: 0.0002 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (1500, )
   MAX_ITER: 2000
@@ -21,5 +23,6 @@ SOLVER:
   CHECKPOINT_PERIOD: 500
 DATALOADER:
   SHUFFLE: False
+  SAMPLER_TRAIN: WeightedTrainingSampler
   NUM_WORKERS: 2
 OUTPUT_DIR: ./output/pg_rcnn/test/

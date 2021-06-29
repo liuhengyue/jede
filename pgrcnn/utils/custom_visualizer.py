@@ -49,11 +49,12 @@ class JerseyNumberVisualizer(Visualizer):
         instances_list = []
         for i in range(len(data['instances'])):
             instance = data['instances'][i]
+            # tensor to numpy
             instances_list.append({
             "person_bbox": instance.gt_boxes.tensor.numpy(),
-            "keypoints": instance.gt_keypoints.tensor.numpy() if hasattr(instance, 'gt_keypoints') else None,
-            "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if hasattr(instance, 'gt_digit_boxes') else None,
-            "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if hasattr(instance, 'gt_digit_classes') else None,
+            "keypoints": instance.gt_keypoints.tensor.numpy() if hasattr(instance, 'gt_keypoints') else np.empty((0, 17, 3)),
+            "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if hasattr(instance, 'gt_digit_boxes') else np.empty((0, 4)),
+            "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if hasattr(instance, 'gt_digit_classes') else np.empty((0,)),
             "category_id": instance.gt_classes.squeeze_().numpy()
             })
         return {"annotations": instances_list}
@@ -312,7 +313,7 @@ class JerseyNumberVisualizer(Visualizer):
         if keypoints is not None:
             for i, keypoints_per_instance in enumerate(keypoints):
                 color = assigned_colors[i]
-                self.draw_and_connect_keypoints(keypoints_per_instance, color=color)
+                self.draw_and_connect_keypoints(keypoints_per_instance, color=color, draw_mid=True)
 
         return self.output
 

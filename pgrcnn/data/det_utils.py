@@ -71,14 +71,18 @@ def transform_instance_annotations(
     """
     if isinstance(transforms, (tuple, list)):
         transforms = T.TransformList(transforms)
+    # if we have coco loaded
+    if "bbox" in annotation:
+        annotation['person_bbox'] = annotation.pop('bbox')
     bbox = BoxMode.convert(annotation["person_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
     # Note that bbox is 1d (per-instance bounding box)
     annotation["person_bbox"] = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
     annotation["bbox_mode"] = BoxMode.XYXY_ABS
-    bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
-    # (n, 4) if given an empty list, it will return (0, 4)
-    bbox = transforms.apply_box(np.array(bbox)).clip(min=0)
-    annotation["digit_bboxes"] = bbox
+    if "digit_bboxes" in annotation:
+        bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
+        # (n, 4) if given an empty list, it will return (0, 4)
+        bbox = transforms.apply_box(np.array(bbox)).clip(min=0)
+        annotation["digit_bboxes"] = bbox
 
     # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format
     # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
@@ -89,8 +93,13 @@ def transform_instance_annotations(
         keypoints = transform_keypoint_annotations(
             annotation["keypoints"], transforms, image_size, keypoint_hflip_indices
         )
-        # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
-        full_keypoints[keypoints_inds, :] = keypoints
+        if keypoints.shape[0] == 4:
+            # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
+            full_keypoints[keypoints_inds, :] = keypoints
+        elif keypoints.shape[0] == 17:
+            full_keypoints = keypoints
+        else:
+            raise NotImplementedError("wrong number of keypoints {}".format(keypoints.shape[0]))
     annotation["keypoints"] = full_keypoints
 
 
@@ -159,22 +168,22 @@ def annotations_to_instances(annos,
     classes = [obj["category_id"] for obj in annos]
     classes = torch.tensor(classes, dtype=torch.int64)
     target.gt_classes = classes
+    if "digit_bboxes" in annos[0]:
+        boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
+        # if the person is filtered out, then its digit boxes should be fitlered out
+        boxes = target.gt_digit_boxes = [Boxes(box) for box in boxes]
+        classes = [obj["digit_ids"] for obj in annos]
+        classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
+        for i, (box, label) in enumerate(zip(boxes, classes)):
+            boxes[i].clip(image_size)
+            keep = box.nonempty()
+            boxes[i] = box[keep]
+            classes[i] = label[keep]
 
-    boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-    # if the person is filtered out, then its digit boxes should be fitlered out
-    boxes = target.gt_digit_boxes = [Boxes(box) for box in boxes]
-    classes = [obj["digit_ids"] for obj in annos]
-    classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
-    for i, (box, label) in enumerate(zip(boxes, classes)):
-        boxes[i].clip(image_size)
-        keep = box.nonempty()
-        boxes[i] = box[keep]
-        classes[i] = label[keep]
-
-    target.gt_digit_classes = classes
-    # add centers and scales
-    target.gt_digit_centers = [box.get_centers() for box in boxes]
-    target.gt_digit_scales = [box.get_scales() for box in boxes]
+        target.gt_digit_classes = classes
+        # add centers and scales
+        target.gt_digit_centers = [box.get_centers() for box in boxes]
+        target.gt_digit_scales = [box.get_scales() for box in boxes]
 
     # not every instance has the keypoints annotation, so we pad it
     kpts = [obj.get("keypoints", np.zeros((num_keypoints, 3))) for obj in annos]

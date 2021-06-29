@@ -51,8 +51,8 @@ def paste_image(target_image, img, alpha=0.5):
     y_max, y_min = H - h, 0
     # find a good place to paste
     while True:
-        x = np.random.randint(x_min, x_max)
-        y = np.random.randint(y_min, y_max)
+        x = np.random.randint(x_min, x_max + 1)
+        y = np.random.randint(y_min, y_max + 1)
         roi = target_image[y:y + h, x:x + w]
         # compute where to place
         iou = roi > 0
@@ -68,8 +68,8 @@ def paste_image(target_image, img, alpha=0.5):
 def copy_paste_mix_images(dataset_dicts,
                           format=None,
                           max_size=800,
-                          min_scale=0.5,
-                          max_scale=1.0,
+                          min_scale=1.0,
+                          # max_scale=1.0,
                           interp=Image.BILINEAR
                           ):
     """
@@ -95,14 +95,14 @@ def copy_paste_mix_images(dataset_dicts,
     }
     per_image_height = target_height // np.sqrt(num_images)
     per_image_width = target_width // np.sqrt(num_images)
-
+    output_size = (per_image_height, per_image_width)
+    max_scale = np.sqrt(num_images) - 0.1
     for dataset_dict in dataset_dicts:
         img = utils.read_image(dataset_dict["file_name"], format=format)
         utils.check_image_size(dataset_dict, img)
 
         # Compute the image scale and scaled size.
         input_size = img.shape[:2]
-        output_size = (per_image_height, per_image_width)
         random_scale = np.random.uniform(min_scale, max_scale)
         random_scale_size = np.multiply(output_size, random_scale)
         scale = np.minimum(

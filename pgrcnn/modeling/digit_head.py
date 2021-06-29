@@ -294,8 +294,10 @@ class DigitOutputLayers(nn.Module):
         scores, proposal_deltas = predictions
 
         # parse box regression outputs
-        if len(proposals):
-            proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor.to(proposal_deltas.device) for p in proposals], dim=0)  # Nx4
+        if len(proposals) and any([p.has("proposal_digit_boxes") for p in proposals]):
+            proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor.to(proposal_deltas.device)
+                                  if p.has('proposal_digit_boxes') else torch.empty((0, 4), device=proposal_deltas.device, dtype=torch.float)
+                                  for p in proposals], dim=0)  # Nx4
             assert not proposal_boxes.requires_grad, "Proposals should not require gradients!"
             # If "gt_boxes" does not exist, the proposals must be all negative and
             # should not be included in regression loss computation.
@@ -303,7 +305,7 @@ class DigitOutputLayers(nn.Module):
             # value won't be used in self.box_reg_loss().
             gt_boxes = cat(
                 [(Boxes.cat(p.gt_digit_boxes) if p.has("gt_digit_boxes")
-                  else Boxes.cat(p.proposal_digit_boxes)).tensor.to(proposal_deltas.device) for p in proposals],
+                  else Boxes([])).tensor.to(proposal_deltas.device) for p in proposals],
                 dim=0,
             )
             # parse classification outputs
@@ -313,7 +315,7 @@ class DigitOutputLayers(nn.Module):
             gt_classes = cat(gt_classes, dim=0)
         else:
             proposal_boxes = gt_boxes = torch.empty((0, 4), device=proposal_deltas.device)
-            gt_classes = torch.empty(0, device=proposal_deltas.device)
+            gt_classes = torch.empty(0, dtype=torch.long, device=proposal_deltas.device)
 
         _log_classification_stats(scores, gt_classes)
 
@@ -332,6 +334,8 @@ class DigitOutputLayers(nn.Module):
             gt_classes is a long tensor of shape R, the gt class label of each proposal.
             R shall be the number of proposals.
         """
+        if pred_deltas.numel() == 0:
+            return pred_deltas.sum() * 0.0
         box_dim = proposal_boxes.shape[1]  # 4 or 5
         # Regression loss is only computed for foreground proposals (those matched to a GT)
         # Box delta loss is only computed between the prediction for the gt class k
@@ -346,6 +350,7 @@ class DigitOutputLayers(nn.Module):
             fg_pred_deltas = pred_deltas[fg_inds]
         else:
             # we minus 1 since bg class is at the first place
+            # gt_classes.add_(-1)
             fg_pred_deltas = pred_deltas.view(-1, self.num_classes, box_dim)[
                 fg_inds, gt_classes[fg_inds] - 1
             ]

@@ -58,7 +58,7 @@ def test_base_dataloader(cfg, show_data=False):
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
     # lazy add config file
-    args.config_file = "configs/pg_rcnn/pg_rcnn_test_single_video.yaml"
+    args.config_file = "configs/pg_rcnn/pg_rcnn_test_coco.yaml"
     # args.config_file = "configs/pg_rcnn/pg_rcnn_test.yaml"
     # args.config_file = "../../configs/faster_rcnn_R_50_FPN_3x.yaml"
     cfg = setup(args)

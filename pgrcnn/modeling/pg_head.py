@@ -19,6 +19,8 @@ from pgrcnn.modeling.roi_heads import BaseROIHeads
 from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from pgrcnn.modeling.utils import compute_targets
 
+
+
 _TOTAL_SKIPPED = 0
 
 logger = logging.getLogger(__name__)
@@ -178,7 +180,9 @@ class PGROIHeads(BaseROIHeads):
     def _forward_digit_box(self, features, proposals):
         features = [features[f] for f in self.in_features]
         # most likely have empty boxes, Boxes.cat([]) will return Boxes on cpu
-        detection_boxes = [Boxes.cat(x.proposal_digit_boxes).to(features[0].device) for x in proposals]
+        detection_boxes = [Boxes.cat(x.proposal_digit_boxes).to(features[0].device)
+                           if x.has('proposal_digit_boxes') else Boxes.cat([]).to(features[0].device)
+                           for x in proposals]
         box_features = self.digit_box_pooler(features, detection_boxes)
         box_features = self.digit_box_head(box_features)
         predictions = self.digit_box_predictor(box_features)
@@ -222,7 +226,6 @@ class PGROIHeads(BaseROIHeads):
 
         instances = self._forward_mask(features, instances)
         instances = self._forward_keypoint(features, instances)
-        # keypoints_logits = cat([instance.pred_keypoints_logits for instance in instances], dim=0)
         instances = self._forward_pose_guided(features, instances)
         instances = self._forward_digit_box(features, instances)
         # remove proposal boxes
@@ -248,19 +251,20 @@ class PGROIHeads(BaseROIHeads):
         del targets
 
         if self.training:
-            # proposals or sampled_instances will be modified in-place
-            losses = self._forward_box(features, proposals)
-            # Usually the original proposals used by the box head are used by the mask, keypoint
-            # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
-            # predicted by the box head.
-            losses.update(self._forward_mask(features, proposals))
-            kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
-            losses.update(kpt_loss)
-            # we may not have the instances for further training
-            if len(sampled_instances) and sum([len(ins) for ins in sampled_instances]):
-                losses.update(self._forward_pose_guided(features, sampled_instances))
-                losses.update(self._forward_digit_box(features, sampled_instances))
-            return proposals, losses
+            with torch.autograd.set_detect_anomaly(True):
+                # proposals or sampled_instances will be modified in-place
+                losses = self._forward_box(features, proposals)
+                # Usually the original proposals used by the box head are used by the mask, keypoint
+                # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
+                # predicted by the box head.
+                losses.update(self._forward_mask(features, proposals))
+                kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
+                losses.update(kpt_loss)
+                # we may not have the instances for further training
+                if len(sampled_instances) and sum([len(ins) for ins in sampled_instances]):
+                    losses.update(self._forward_pose_guided(features, sampled_instances))
+                    losses.update(self._forward_digit_box(features, sampled_instances))
+                return proposals, losses
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
@@ -313,14 +317,10 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
     scale_targets = []
     # keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
-        if len(instances_per_image) == 0:
-            continue
-        heatmaps_per_image, scales_per_image, valid_per_image = compute_targets(
-            instances_per_image.gt_digit_centers,
-            instances_per_image.gt_digit_scales,
-            instances_per_image.proposal_boxes.tensor,
-            instances_per_image.pred_keypoints_logits
-        )
+        # if len(instances_per_image) == 0 or (not instances_per_image.has('gt_digit_boxes')):
+        #     continue
+        heatmaps_per_image, scales_per_image, valid_per_image = \
+            compute_targets(instances_per_image)
         heatmaps.append(heatmaps_per_image)
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
@@ -356,6 +356,6 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
     # pred_scale_logits = pred_scale_logits.view(N, 2, H * W)
     pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
     # we predict the scale wrt. feature box
-    wh_loss = size_weight * F.l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+    wh_loss = size_weight * F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
 
     return {'ct_loss': ct_loss, 'wh_loss': wh_loss}

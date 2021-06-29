@@ -4,12 +4,10 @@ from math import sqrt
 
 import torch
 import torch.nn.functional as F
-
+from pgrcnn.structures import Players
 def compute_targets(
-        keypoints: List[torch.Tensor],
-        scales: List[torch.Tensor],
-        rois: torch.Tensor,
-        pred_keypoint_logits: torch.Tensor
+        instances_per_image: Players,
+        K: int = 1
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
         Encode keypoint locations into a target heatmap for use in Gaussian Focal loss.
@@ -22,19 +20,27 @@ def compute_targets(
         Returns:
             heatmaps: A tensor of shape (N, K, H, W)
     """
+
+    pred_keypoint_logits = instances_per_image.pred_keypoints_logits
     # we define a zero tensor as the output heatmaps
-    heatmaps = torch.zeros_like(pred_keypoint_logits)
+    N, _, H, W = pred_keypoint_logits.shape
+    rois = instances_per_image.proposal_boxes.tensor
+    heatmaps = torch.zeros((N, K, H, W), device=pred_keypoint_logits.device)
+    if (not instances_per_image.has("gt_digit_centers")) or rois.numel() == 0:
+        return heatmaps, \
+               torch.zeros((0, 2), dtype=torch.float, device=pred_keypoint_logits.device), \
+               torch.zeros((0, 3), dtype=torch.long, device=pred_keypoint_logits.device)
+    keypoints = instances_per_image.gt_digit_centers
+    scales = instances_per_image.gt_digit_scales
+
     # record the positive locations
     valid = []
     # gt scale targets
     scale_targets = []
-    if rois.numel() == 0:
-        return heatmaps
-    heatmap_size = heatmaps.shape
     offset_x = rois[:, 0]
     offset_y = rois[:, 1]
-    scale_x = heatmap_size[3] / (rois[:, 2] - rois[:, 0])
-    scale_y = heatmap_size[2] / (rois[:, 3] - rois[:, 1])
+    scale_x = W / (rois[:, 2] - rois[:, 0])
+    scale_y = H / (rois[:, 3] - rois[:, 1])
 
     # process per roi
     for i, (kpts, scale, dx, dy, dw, dh, roi) in \
@@ -50,10 +56,10 @@ def compute_targets(
         y = (y - dy) * dh
         y = y.floor().long()
 
-        x[x_boundary_inds] = heatmap_size[3] - 1
-        y[y_boundary_inds] = heatmap_size[2] - 1
+        x[x_boundary_inds] = W - 1
+        y[y_boundary_inds] = H - 1
 
-        valid_loc = (x >= 0) & (y >= 0) & (x < heatmap_size[3]) & (y < heatmap_size[2])
+        valid_loc = (x >= 0) & (y >= 0) & (x < W) & (y < H)
         # mark the positive targets
         y = y[valid_loc]
         x = x[valid_loc]

@@ -22,13 +22,15 @@ class MapDataset(data.Dataset):
             elements from the dataset.
     """
 
-    def __init__(self, dataset, map_func, copy_paste_mix=0):
+    def __init__(self, dataset, map_func, copy_paste_mix=0, applicable_dict=None, applicable_inds=None):
         self._dataset = dataset
         self._map_func = PicklableWrapper(map_func)  # wrap so that a lambda will work
 
         self._rng = random.Random(42)
         self._fallback_candidates = set(range(len(dataset)))
         self._copy_paste_mix = copy_paste_mix
+        self._applicable_dict = applicable_dict
+        self._applicable_inds = applicable_inds
 
     def __len__(self):
         return len(self._dataset)
@@ -37,10 +39,11 @@ class MapDataset(data.Dataset):
         retry_count = 0
         cur_idx = int(idx)
         while True:
-            if self._copy_paste_mix:
+            if self._copy_paste_mix and self._applicable_dict[cur_idx]:
                 # generate a list of random ids to load multiple images
-                extra_inds = np.random.randint(np.random.randint(self.__len__(), size=1),
-                                               size=np.random.randint(1, self._copy_paste_mix + 1, size=1))
+                mix_size = self._rng.randint(0, self._copy_paste_mix)
+                # with replacement (good for when dataset smaller than mix_size)
+                extra_inds = self._rng.choices(self._applicable_inds, k=mix_size)
                 data = self._map_func([self._dataset[cur_idx]] + [self._dataset[i] for i in extra_inds])
             else:
                 data = self._map_func(self._dataset[cur_idx])

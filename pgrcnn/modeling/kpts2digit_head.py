@@ -163,12 +163,6 @@ class Kpts2DigitHead(nn.Module):
         conv_dims = [64] * 4
         self._init_output_layers(conv_norm, conv_dims, num_interests)
 
-        # for layer in self.conv_norm_relus:
-        #     if type(layer).__name__ != 'DeformBottleneckBlock': #  already init in the block
-        #         weight_init.c2_msra_fill(layer)
-        # for layer in self.heads:
-        #     weight_init.c2_msra_fill(layer)
-
         # or another initialization
         for name, param in self.named_parameters():
             if "bias" in name:

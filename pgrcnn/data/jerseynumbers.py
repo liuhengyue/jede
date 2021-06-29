@@ -40,6 +40,17 @@ KEYPOINT_NAMES = (
     "left_ankle", "right_ankle",
 )
 
+COCO_PERSON_KEYPOINT_FLIP_MAP = (
+    ("left_eye", "right_eye"),
+    ("left_ear", "right_ear"),
+    ("left_shoulder", "right_shoulder"),
+    ("left_elbow", "right_elbow"),
+    ("left_wrist", "right_wrist"),
+    ("left_hip", "right_hip"),
+    ("left_knee", "right_knee"),
+    ("left_ankle", "right_ankle"),
+)
+
 KEYPOINT_CONNECTION_RULES = [
     # face
     ("left_ear", "left_eye", (102, 204, 255)),
@@ -133,6 +144,6 @@ def register_jerseynumbers(cfg):
         metadataCat.set(thing_classes=CLASS_NAMES)
         metadataCat.set(keypoint_names=KEYPOINT_NAMES)
         metadataCat.set(keypoint_connection_rules=KEYPOINT_CONNECTION_RULES)
-        metadataCat.set(keypoint_flip_map=()) # no flip map will be used
+        metadataCat.set(keypoint_flip_map=COCO_PERSON_KEYPOINT_FLIP_MAP) # no flip map will be used though
 
 # register_jerseynumbers()

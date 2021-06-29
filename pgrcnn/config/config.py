@@ -48,7 +48,7 @@ def add_poseguide_config(cfg):
     # disable shuffle for debugging
     _C.DATALOADER.SHUFFLE = True
     # dataset configurations
-    _C.DATASETS.DIGIT_ONLY = True
+    _C.DATASETS.DIGIT_ONLY = False
     _C.DATASETS.NUM_IMAGES = -1 # -1 means all
     _C.DATASETS.TRAIN_VIDEO_IDS = [0,1,3]
     _C.DATASETS.TEST_VIDEO_IDS =[2]

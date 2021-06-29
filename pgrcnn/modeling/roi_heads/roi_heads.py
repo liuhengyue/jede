@@ -265,6 +265,8 @@ class BaseROIHeads(StandardROIHeads):
         instance: single instance of one image
         """
         for detection_per_image, targets_per_image in zip(detections, targets):
+            if not targets_per_image.has('gt_digit_boxes'):
+                continue
             N = len(targets_per_image)
             # create a instance index to match with person proposal_box
             inds = torch.arange(N).repeat_interleave(detection_per_image.size(1), dim=0).to(detection_per_image.device)
