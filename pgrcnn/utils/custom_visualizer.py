@@ -51,11 +51,11 @@ class JerseyNumberVisualizer(Visualizer):
             instance = data['instances'][i]
             # tensor to numpy
             instances_list.append({
-            "person_bbox": instance.gt_boxes.tensor.numpy(),
-            "keypoints": instance.gt_keypoints.tensor.numpy() if hasattr(instance, 'gt_keypoints') else np.empty((0, 17, 3)),
-            "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if hasattr(instance, 'gt_digit_boxes') else np.empty((0, 4)),
-            "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if hasattr(instance, 'gt_digit_classes') else np.empty((0,)),
-            "category_id": instance.gt_classes.squeeze_().numpy()
+            "person_bbox": instance.gt_boxes.tensor.numpy() if instance.has('gt_boxes') else np.empty((0, 4)),
+            "keypoints": instance.gt_keypoints.tensor.numpy() if instance.has('gt_keypoints') else np.empty((0, 17, 3)),
+            "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if instance.has('gt_digit_boxes') else np.empty((0, 4)),
+            "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if instance.has('gt_digit_classes') else np.empty((0,)),
+            "category_id": instance.gt_classes.squeeze_().numpy() if instance.has('gt_classes') else np.empty((0,))
             })
         return {"annotations": instances_list}
 
@@ -83,10 +83,9 @@ class JerseyNumberVisualizer(Visualizer):
             if isinstance(digit_bboxes, list) and len(digit_bboxes) == 0:
                 digit_bboxes = np.empty((0, 4))
             digit_bboxes = digit_bboxes[np.where(~np.all(digit_bboxes == 0, axis=1))]
-            digit_ids = digit_ids[np.where(digit_ids > -1)]
+            digit_ids = digit_ids[np.where(digit_ids > -1)].tolist()
 
             keypts = keypoints.reshape(1, -1, 3) if keypoints is not None else None
-
 
             # here, we have two different bbox (person and digit)
             if bbox_mode is not None:
@@ -94,16 +93,17 @@ class JerseyNumberVisualizer(Visualizer):
                 digit_bboxes = [BoxMode.convert(each_digit_bbox, bbox_mode, BoxMode.XYXY_ABS) for
                            each_digit_bbox in digit_bboxes]
             # person labels, digit labels
-            labels = [category_id] if category_id is not None else None
+            labels = category_id.tolist()
+            digit_labels = []
             if self.metadata:
                 names = self.metadata.get("thing_classes", None)
-                # not too necessary
+                # map to names
                 if names:
-                    labels = [names[i] for i in labels] if labels is not None else None
-                    digit_labels = [names[i] for i in digit_ids] if digit_ids is not None else None
-            if labels is not None:
+                    labels = [names[i] for i in labels]
+                    digit_labels = [names[i] for i in digit_ids]
+            if len(labels):
                 self.overlay_instances(labels=labels, boxes=person_bbox, masks=None, keypoints=keypts)
-            if digit_labels is not None:
+            if len(digit_labels):
                 self.overlay_instances(labels=digit_labels, boxes=digit_bboxes, masks=None, keypoints=None)
             return self.output
 

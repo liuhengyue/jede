@@ -119,27 +119,27 @@ def copy_paste_mix_images(dataset_dicts,
         if not succeeded:
             continue
         for anno in dataset_dict["annotations"]:
-            person_bbox = tfm.apply_box(np.array(anno["person_bbox"]))[0]
-            digit_bboxes = tfm.apply_box(np.array(anno["digit_bboxes"]))
-            keypoints = np.array(anno["keypoints"]).reshape(-1, 3)
-            keypoints_xy = tfm.apply_coords(keypoints[:, :2])
-            keypoints_xy[:, 0] += x
-            keypoints_xy[:, 1] += y
-            keypoints = np.concatenate((keypoints_xy, keypoints[:, 2:]), axis=1).reshape(-1).tolist()
-            person_bbox[0::2] += x
-            person_bbox[1::2] += y
-            digit_bboxes[:, 0::2] += x
-            digit_bboxes[:, 1::2] += y
-            person_bbox= person_bbox.tolist()
-            digit_bboxes = digit_bboxes.tolist()
-            target_dataset_dict["annotations"].append({
-                "person_bbox": person_bbox,
-                "digit_bboxes": digit_bboxes,
-                "keypoints": keypoints,
-                "category_id": 0,
-                "bbox_mode": anno["bbox_mode"],
-                "digit_labels": anno["digit_labels"],
-                "digit_ids": anno["digit_ids"]
-            })
+            instance_anno = {"bbox_mode": anno["bbox_mode"]}
+            if "person_bbox" in anno:
+                person_bbox = tfm.apply_box(np.array(anno["person_bbox"]))[0]
+                person_bbox[0::2] += x
+                person_bbox[1::2] += y
+                person_bbox = person_bbox.tolist()
+                instance_anno.update({"person_bbox": person_bbox, "category_id": 0})
+            if "keypoints" in anno:
+                keypoints = np.array(anno["keypoints"]).reshape(-1, 3)
+                keypoints_xy = tfm.apply_coords(keypoints[:, :2])
+                keypoints_xy[:, 0] += x
+                keypoints_xy[:, 1] += y
+                keypoints = np.concatenate((keypoints_xy, keypoints[:, 2:]), axis=1).reshape(-1).tolist()
+                instance_anno.update({"keypoints": keypoints})
+            if "digit_bboxes" in anno:
+                digit_bboxes = tfm.apply_box(np.array(anno["digit_bboxes"]))
+                digit_bboxes[:, 0::2] += x
+                digit_bboxes[:, 1::2] += y
+                digit_bboxes = digit_bboxes.tolist()
+                instance_anno.update({"digit_bboxes": digit_bboxes,
+                                      "digit_ids": anno["digit_ids"]})
+            target_dataset_dict["annotations"].append(instance_anno)
     target_dataset_dict["image"] = target_image
     return target_dataset_dict

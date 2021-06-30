@@ -248,8 +248,7 @@ def print_instances_class_histogram(dataset_dicts, class_names):
     for entry in dataset_dicts:
         annos = entry["annotations"]
         classes = [x["category_id"] for x in annos if not x.get("iscrowd", 0) and ("category_id" in x)]
-        if not classes:
-            classes = [digit_label for x in annos if not x.get("iscrowd", 0) for digit_label in x["digit_labels"]]
+        classes += [digit_id for x in annos for digit_id in x["digit_ids"] if x.get("digit_ids", 0)]
         histogram += np.histogram(classes, bins=hist_bins)[0]
 
     N_COLS = min(6, len(class_names) * 2)
@@ -334,7 +333,7 @@ def get_detection_dataset_dicts(
                 pass
             # get the mapping from data index to the weight probability, and dataset source
             # record if the data can be applied with CopyPasteMix
-            has_jerseynumber = ('digit_bboxes' in dicts[0]['annotations'][0]) and ('person_bbox' in dicts[0]['annotations'][0])
+            has_jerseynumber = 'digit_bboxes' in dicts[0]['annotations'][0] # and ('person_bbox' in dicts[0]['annotations'][0])
             for j, dataset_dict in enumerate(dataset_dicts[i]):
                 applicables[start_ind + j] = has_jerseynumber
                 weights.append( 1 / (len(dataset_dicts) * len(dataset_dicts[i])) )

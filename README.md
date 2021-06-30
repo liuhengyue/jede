@@ -7,8 +7,14 @@ See [installation instructions](https://detectron2.readthedocs.io/tutorials/inst
 
 ## Dataset Preparation
 
+### Prepare Jersey Number
+
 ```
-# prepare COCO
+# to be added
+```
+
+### Prepare COCO (Optional)
+```
 wget http://images.cocodataset.org/zips/train2017.zip
 wget http://images.cocodataset.org/zips/val2017.zip
 wget http://images.cocodataset.org/annotations/annotations_trainval2017.zip
@@ -19,8 +25,9 @@ unzip val2017.zip -d datasets/coco
 unzip annotations_trainval2017.zip -d datasets/coco
 
 rm train2017.zip val2017.zip annotations_trainval2017.zip
-
-# prepare SVHN
+```
+### Prepare SVHN (Optional)
+```
 wget http://ufldl.stanford.edu/housenumbers/train.tar.gz
 mkdir svhn
 tar -xvzf train.tar.gz -C svhn

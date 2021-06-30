@@ -181,8 +181,6 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 instances = det_utils.annotations_to_instances(
                     annos, image_shape, digit_only=self.digit_only
                 )
-                assert len(instances.get_fields()) == 7, "missing fields for image {}.".format(
-                    dataset_dict["file_name"])
                 dataset_dict["instances"] = instances
                 # dataset_dict["instances"] = det_utils.filter_empty_instances(instances)
             return dataset_dict

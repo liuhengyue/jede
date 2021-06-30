@@ -89,14 +89,34 @@ assert os.path.exists(DATASET_ROOT), "Dataset jnw not found in {}".format(DATASE
 def get_dicts(data_dir, anno_dir, split=None, digit_only=False, num_images=-1):
     """
     Get annotations for specific split/video.
-    Note these fields could be an empty list:
-        "digit_bboxes": [],
-        "digit_labels": [],
-        "keypoints": [],
 
-    data_dir: datasets/jnw/total
-    anno_dir: datasets/jnw/annotations/jnw_annotations.json
-    split:    list of video ids. Eg. [0, 1, 2, 3]
+    Args:
+        data_dir: datasets/jnw/total
+        anno_dir: datasets/jnw/annotations/jnw_annotations.json
+        split:    list of video ids. Eg. [0, 1, 2, 3]
+
+    Returns:
+        annotations: List[Dict]
+        for each dict, it has fields of:
+            image_id: int
+            file_name: str
+            width: int
+            height: int
+            video_id: int
+            annotations: list of dicts:
+                each annotation is an instance of a person, with fields of:
+                    person_bbox: list[float] of 4 coordinates
+                    category_id: 0 # person class id is 0
+                    keypoints: list[int], shape of (num_keypoints x 3)
+                    digit_bboxes: list[list[float]]
+                    digit_ids: list[int]
+                    bbox_mode: BoxMode.XYXY_ABS
+
+            Note these fields could be an empty list:
+                "digit_bboxes": [],
+                "digit_ids": [],
+                "keypoints": [],
+
     """
     annotations = json.load(open(anno_dir, 'r'))
     split = [split] if isinstance(split, int) else split

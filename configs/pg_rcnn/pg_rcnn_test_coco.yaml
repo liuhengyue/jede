@@ -3,7 +3,7 @@ MODEL:
   ROI_DIGIT_HEAD:
     NUM_PROPOSAL: 20
 DATASETS:
-  TRAIN: ("keypoints_coco_2017_val_100", "jerseynumbers_train") #
+  TRAIN: ("svhn_train",) #("keypoints_coco_2017_val_100", "jerseynumbers_train") #
   TEST: ("keypoints_coco_2017_val_100",)
   NUM_IMAGES: 200 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]

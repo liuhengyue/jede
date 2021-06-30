@@ -74,10 +74,11 @@ def transform_instance_annotations(
     # if we have coco loaded
     if "bbox" in annotation:
         annotation['person_bbox'] = annotation.pop('bbox')
-    bbox = BoxMode.convert(annotation["person_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
-    # Note that bbox is 1d (per-instance bounding box)
-    annotation["person_bbox"] = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
-    annotation["bbox_mode"] = BoxMode.XYXY_ABS
+    if "person_bbox" in annotation:
+        bbox = BoxMode.convert(annotation["person_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
+        # Note that bbox is 1d (per-instance bounding box)
+        annotation["person_bbox"] = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
+        annotation["bbox_mode"] = BoxMode.XYXY_ABS
     if "digit_bboxes" in annotation:
         bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
         # (n, 4) if given an empty list, it will return (0, 4)
@@ -156,18 +157,22 @@ def annotations_to_instances(annos,
 
     target = Players(image_size)
     # person bboxes
-    boxes = [BoxMode.convert(obj["person_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-    boxes = Boxes(boxes)
-    boxes.clip(image_size)
-    # we may have empty after cropping
-    keep = boxes.nonempty()
-    target.gt_boxes = boxes[keep]
-    keep_inds = keep.nonzero(as_tuple=True)[0]
-    # better to just select the kept annos
-    annos = [annos[keep_idx] for keep_idx in keep_inds]
-    classes = [obj["category_id"] for obj in annos]
-    classes = torch.tensor(classes, dtype=torch.int64)
-    target.gt_classes = classes
+    # check if we have person_bbox
+    has_person_bbox = annos[0].get("person_bbox", 0)
+    if has_person_bbox:
+        boxes = [BoxMode.convert(obj["person_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS)
+                 for obj in annos if obj.get("person_bbox", 0)]
+        boxes = Boxes(boxes)
+        boxes.clip(image_size)
+        # we may have empty after cropping
+        keep = boxes.nonempty()
+        target.gt_boxes = boxes[keep]
+        keep_inds = keep.nonzero(as_tuple=True)[0]
+        # better to just select the kept annos
+        annos = [annos[keep_idx] for keep_idx in keep_inds]
+        classes = [obj["category_id"] for obj in annos if obj.get("category_id", 0)]
+        classes = torch.tensor(classes, dtype=torch.int64)
+        target.gt_classes = classes
     if "digit_bboxes" in annos[0]:
         boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
         # if the person is filtered out, then its digit boxes should be fitlered out
