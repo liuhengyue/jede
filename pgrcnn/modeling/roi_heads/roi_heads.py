@@ -42,15 +42,20 @@ def select_foreground_proposals(
     """
     assert isinstance(proposals, (list, tuple))
     assert isinstance(proposals[0], Players)
-    assert proposals[0].has("gt_classes")
+    # assert proposals[0].has("gt_classes")
     fg_proposals = []
     fg_selection_masks = []
     for proposals_per_image in proposals:
+        if not proposals_per_image.has("gt_classes"):
+            # add support for svhn images
+            fg_proposals.append(proposals_per_image)
+            continue
         gt_classes = proposals_per_image.gt_classes
         fg_selection_mask = (gt_classes != -1) & (gt_classes != bg_label)
         fg_idxs = fg_selection_mask.nonzero().squeeze(1)
         fg_proposals.append(proposals_per_image[fg_idxs])
         fg_selection_masks.append(fg_selection_mask)
+
     return fg_proposals, fg_selection_masks
 
 
@@ -75,7 +80,8 @@ def select_proposals_with_visible_keypoints(proposals: List[Players]) -> List[Pl
     all_num_fg = []
     for proposals_per_image in proposals:
         # If empty/unannotated image (hard negatives), skip filtering for train
-        if len(proposals_per_image) == 0:
+        # add support for svhn images
+        if len(proposals_per_image) == 0 or (not proposals_per_image.has("gt_keypoints")):
             ret.append(proposals_per_image)
             continue
         gt_keypoints = proposals_per_image.gt_keypoints.tensor
@@ -95,7 +101,7 @@ def select_proposals_with_visible_keypoints(proposals: List[Players]) -> List[Pl
         ret.append(proposals_per_image[selection_idxs])
 
     storage = get_event_storage()
-    storage.put_scalar("keypoint_head/num_fg_samples", np.mean(all_num_fg))
+    storage.put_scalar("keypoint_head/num_fg_samples", np.mean(all_num_fg) if len(all_num_fg) else 0)
     return ret
 
 @ROI_HEADS_REGISTRY.register()
@@ -159,20 +165,21 @@ class BaseROIHeads(StandardROIHeads):
         num_fg_samples = []
         num_bg_samples = []
         for proposals_per_image, targets_per_image in zip(proposals, targets):
-            has_gt = len(targets_per_image) > 0
-            match_quality_matrix = pairwise_iou(
-                targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
-            )
-            matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-            sampled_idxs, gt_classes = self._sample_proposals(
-                matched_idxs, matched_labels, targets_per_image.gt_classes
-            )
-
-            # Set target attributes of the sampled proposals:
-            proposals_per_image = proposals_per_image[sampled_idxs]
-            proposals_per_image.gt_classes = gt_classes
-
+            has_gt = len(targets_per_image) > 0 and targets_per_image.has("gt_boxes")
             if has_gt:
+                match_quality_matrix = pairwise_iou(
+                    targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
+                )
+                matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+                sampled_idxs, gt_classes = self._sample_proposals(
+                    matched_idxs, matched_labels, targets_per_image.gt_classes
+                )
+
+                # Set target attributes of the sampled proposals:
+                proposals_per_image = proposals_per_image[sampled_idxs]
+                proposals_per_image.gt_classes = gt_classes
+
+
                 sampled_targets = matched_idxs[sampled_idxs]
                 # We index all the attributes of targets that start with "gt_"
                 # and have not been added to proposals yet (="gt_classes").
@@ -186,18 +193,21 @@ class BaseROIHeads(StandardROIHeads):
                             proposals_per_image.set(trg_name, [trg_value[i] for i in sampled_targets])
                         else:
                             proposals_per_image.set(trg_name, trg_value[sampled_targets])
+                num_bg_samples.append((gt_classes == self.num_classes).sum().item())
+                num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])
             # If no GT is given in the image, we don't know what a dummy gt value can be.
             # Therefore the returned proposals won't have any gt_* fields, except for a
             # gt_classes full of background label.
+            else:
+                # no gt for person, copy the gt as the target
+                proposals_per_image = targets_per_image
 
-            num_bg_samples.append((gt_classes == self.num_classes).sum().item())
-            num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])
             proposals_with_gt.append(proposals_per_image)
 
         # Log the number of fg/bg samples that are selected for training ROI heads
         storage = get_event_storage()
-        storage.put_scalar("roi_head/num_fg_samples", np.mean(num_fg_samples))
-        storage.put_scalar("roi_head/num_bg_samples", np.mean(num_bg_samples))
+        storage.put_scalar("roi_head/num_fg_samples", np.mean(num_fg_samples) if len(num_fg_samples) else 0)
+        storage.put_scalar("roi_head/num_bg_samples", np.mean(num_bg_samples) if len(num_bg_samples) else 0)
 
         return proposals_with_gt
 
@@ -266,6 +276,9 @@ class BaseROIHeads(StandardROIHeads):
         """
         for detection_per_image, targets_per_image in zip(detections, targets):
             if not targets_per_image.has('gt_digit_boxes'):
+                continue
+            if not targets_per_image.has("proposal_boxes"):
+                targets_per_image.proposal_digit_boxes = targets_per_image.gt_digit_boxes
                 continue
             N = len(targets_per_image)
             # create a instance index to match with person proposal_box
@@ -356,7 +369,8 @@ class BaseROIHeads(StandardROIHeads):
             In inference, a list of `Instances`, the predicted instances.
         """
         features = [features[f] for f in self.box_in_features]
-        box_features = self.box_pooler(features, [x.proposal_boxes for x in proposals])
+        person_proposal_boxes = [x.proposal_boxes if x.has('proposal_boxes') else Boxes([]).to(features[0].device) for x in proposals]
+        box_features = self.box_pooler(features, person_proposal_boxes)
         box_features = self.box_head(box_features)
         predictions = self.box_predictor(box_features)
         del box_features
@@ -402,7 +416,12 @@ class BaseROIHeads(StandardROIHeads):
 
         if self.keypoint_pooler is not None:
             features = [features[f] for f in self.keypoint_in_features]
-            boxes = [x.proposal_boxes if self.training else x.pred_boxes for x in instances]
+            if self.training:
+                boxes = [x.proposal_boxes if x.has("proposal_boxes")
+                         else Boxes.cat([]).to(features[0].device)
+                        for x in instances]
+            else:
+                boxes = [x.pred_boxes for x in instances]
             # if boxes is an empty list, we get a zero tensor on cpu!
             features = self.keypoint_pooler(features, boxes)
         else:

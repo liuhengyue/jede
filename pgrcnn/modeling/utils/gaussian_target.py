@@ -7,23 +7,29 @@ import torch.nn.functional as F
 from pgrcnn.structures import Players
 def compute_targets(
         instances_per_image: Players,
-        K: int = 1
+        heatmap_size: Tuple[int, int, int]
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
         Encode keypoint locations into a target heatmap for use in Gaussian Focal loss.
 
         Arguments:
-            keypoints: list of N tensors of keypoint locations in of shape (-1, 2).
-            rois: Nx4 tensor of rois in xyxy format
-            heatmap_size: represents (N, K, H, W)
+            instances_per_image: contain fields used
+                keypoints: list of N tensors of keypoint locations in of shape (-1, 2).
+                rois: Nx4 tensor of rois in xyxy format
+            heatmap_size: represents (K, H, W)
 
         Returns:
             heatmaps: A tensor of shape (N, K, H, W)
     """
-
+    K, H, W = heatmap_size
+    if not instances_per_image.has("proposal_boxes"):
+        device = instances_per_image.gt_digit_boxes[0].device
+        return torch.empty((0, K, H, W), device=device), \
+               torch.empty((0, 2), dtype=torch.float, device=device), \
+               torch.empty((0, 3), dtype=torch.long, device=device)
     pred_keypoint_logits = instances_per_image.pred_keypoints_logits
     # we define a zero tensor as the output heatmaps
-    N, _, H, W = pred_keypoint_logits.shape
+    N = pred_keypoint_logits.shape[0]
     rois = instances_per_image.proposal_boxes.tensor
     heatmaps = torch.zeros((N, K, H, W), device=pred_keypoint_logits.device)
     if (not instances_per_image.has("gt_digit_centers")) or rois.numel() == 0:

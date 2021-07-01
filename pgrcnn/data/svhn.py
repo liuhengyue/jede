@@ -5,7 +5,8 @@ import numpy as np
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
 
-DATASET_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../datasets/svhn'))
+# DATASET_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../datasets/svhn'))
+DATASET_ROOT = 'datasets/svhn'
 
 CLASS_NAMES = [
     'person', '0', '1', '2', '3',

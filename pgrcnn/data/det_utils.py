@@ -85,23 +85,24 @@ def transform_instance_annotations(
         bbox = transforms.apply_box(np.array(bbox)).clip(min=0)
         annotation["digit_bboxes"] = bbox
 
-    # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format
-    # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
-    # indice: "left_shoulder" 5, "right_shoulder", 6, "left_hip", 11 "right_hip", 12
-    num_keypoints = 17 if pad_to_full else 4
-    full_keypoints = np.zeros((num_keypoints, 3))
-    if "keypoints" in annotation and len(annotation["keypoints"]) > 0:
-        keypoints = transform_keypoint_annotations(
-            annotation["keypoints"], transforms, image_size, keypoint_hflip_indices
-        )
-        if keypoints.shape[0] == 4:
-            # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
-            full_keypoints[keypoints_inds, :] = keypoints
-        elif keypoints.shape[0] == 17:
-            full_keypoints = keypoints
-        else:
-            raise NotImplementedError("wrong number of keypoints {}".format(keypoints.shape[0]))
-    annotation["keypoints"] = full_keypoints
+    if "keypoints" in annotation:
+        # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format
+        # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
+        # indice: "left_shoulder" 5, "right_shoulder", 6, "left_hip", 11 "right_hip", 12
+        num_keypoints = 17 if pad_to_full else 4
+        full_keypoints = np.zeros((num_keypoints, 3))
+        if len(annotation["keypoints"]) > 0:
+            keypoints = transform_keypoint_annotations(
+                annotation["keypoints"], transforms, image_size, keypoint_hflip_indices
+            )
+            if keypoints.shape[0] == 4:
+                # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
+                full_keypoints[keypoints_inds, :] = keypoints
+            elif keypoints.shape[0] == 17:
+                full_keypoints = keypoints
+            else:
+                raise NotImplementedError("wrong number of keypoints {}".format(keypoints.shape[0]))
+        annotation["keypoints"] = full_keypoints
 
 
     return annotation
@@ -158,10 +159,10 @@ def annotations_to_instances(annos,
     target = Players(image_size)
     # person bboxes
     # check if we have person_bbox
-    has_person_bbox = annos[0].get("person_bbox", 0)
+    has_person_bbox = "person_bbox" in annos[0]
     if has_person_bbox:
         boxes = [BoxMode.convert(obj["person_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS)
-                 for obj in annos if obj.get("person_bbox", 0)]
+                 for obj in annos]
         boxes = Boxes(boxes)
         boxes.clip(image_size)
         # we may have empty after cropping
@@ -170,7 +171,7 @@ def annotations_to_instances(annos,
         keep_inds = keep.nonzero(as_tuple=True)[0]
         # better to just select the kept annos
         annos = [annos[keep_idx] for keep_idx in keep_inds]
-        classes = [obj["category_id"] for obj in annos if obj.get("category_id", 0)]
+        classes = [obj["category_id"] for obj in annos]
         classes = torch.tensor(classes, dtype=torch.int64)
         target.gt_classes = classes
     if "digit_bboxes" in annos[0]:
@@ -191,8 +192,9 @@ def annotations_to_instances(annos,
         target.gt_digit_scales = [box.get_scales() for box in boxes]
 
     # not every instance has the keypoints annotation, so we pad it
-    kpts = [obj.get("keypoints", np.zeros((num_keypoints, 3))) for obj in annos]
-    target.gt_keypoints = Keypoints(kpts)
+    if "keypoints" in annos[0]:
+        kpts = [obj.get("keypoints") for obj in annos]
+        target.gt_keypoints = Keypoints(kpts)
     return target
 
 

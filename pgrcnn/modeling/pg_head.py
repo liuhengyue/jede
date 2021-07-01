@@ -134,31 +134,39 @@ class PGROIHeads(BaseROIHeads):
 
         Arguments:
         """
+        features = [features[f] for f in self.box_in_features]
+        device = features[0].device
         if self.use_person_box_features:
             # we pool the features again for convenience
-            features = [features[f] for f in self.box_in_features]
             # 14 x 14 pooler
             if self.training:
-                box_features = self.keypoint_pooler(features, [x.proposal_boxes for x in instances])
+                box_features = self.keypoint_pooler(features, [x.proposal_boxes if x.has("proposal_boxes")
+                                                               else Boxes([]).to(device) for x in instances])
             else:
                 box_features = self.keypoint_pooler(features, [x.pred_boxes for x in instances])
         else:
             box_features = None
-        kpts_logits = cat([b.pred_keypoints_logits for b in instances], dim=0)
+        kpts_logits = cat([b.pred_keypoints_logits if b.has("pred_keypoints_logits")
+                           else torch.empty((0, self.keypoint_head.num_keypoints,
+                                             int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[0]),
+                                             int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[1])),
+                                             dtype=torch.float32, device=device)
+                           for b in instances], dim=0)
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
         center_heatmaps, scale_heatmaps = self.digit_head(kpts_logits, box_features)
         if self.training:
             loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, instances, normalizer=None)
             with torch.no_grad():
-                bboxes_flat = cat([b.proposal_boxes.tensor for b in instances], dim=0)
+                bboxes_flat = cat([b.proposal_boxes.tensor if b.has("proposal_boxes")
+                                   else torch.empty((0, 4), dtype=torch.float32, device=device)
+                                   for b in instances], dim=0)
                 # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                          K=self.num_ctdet_proposal, feature_scale="feature")
                 # todo: has duplicate boxes
-                len_instances = [len(instance) for instance in instances]
+                len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                 detections = list(detections.split(len_instances))
                 # assign new fields to instances
-                # per image
                 self.label_and_sample_digit_proposals(detections, instances)
 
             return loss
@@ -257,7 +265,7 @@ class PGROIHeads(BaseROIHeads):
                 # Usually the original proposals used by the box head are used by the mask, keypoint
                 # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
                 # predicted by the box head.
-                losses.update(self._forward_mask(features, proposals))
+                # losses.update(self._forward_mask(features, proposals))
                 kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
                 losses.update(kpt_loss)
                 # we may not have the instances for further training
@@ -317,26 +325,18 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
     scale_targets = []
     # keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
-        # if len(instances_per_image) == 0 or (not instances_per_image.has('gt_digit_boxes')):
-        #     continue
         heatmaps_per_image, scales_per_image, valid_per_image = \
-            compute_targets(instances_per_image)
+            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:])
         heatmaps.append(heatmaps_per_image)
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
-    if len(heatmaps):
-        keypoint_targets = cat(heatmaps, dim=0)
-        valid = cat(valid, dim=0)
-        scale_targets = cat(scale_targets, dim=0)
-    else:
-        valid = pred_keypoint_logits.new_empty((0))
+    # should be safe since we return empty tensors from `compute_targets'
+    keypoint_targets = cat(heatmaps, dim=0)
+    valid = cat(valid, dim=0)
+    scale_targets = cat(scale_targets, dim=0)
     # torch.mean (in binary_cross_entropy_with_logits) doesn't
     # accept empty tensors, so handle it separately
-    if len(heatmaps) == 0 or valid.numel() == 0:
-        global _TOTAL_SKIPPED
-        _TOTAL_SKIPPED += 1
-        storage = get_event_storage()
-        storage.put_scalar("kpts_num_skipped_batches", _TOTAL_SKIPPED, smoothing_hint=False)
+    if keypoint_targets.numel() == 0 or valid.numel() == 0:
         return {'ct_loss': pred_keypoint_logits.sum() * 0,
                 'wh_loss': pred_keypoint_logits.sum() * 0}
 

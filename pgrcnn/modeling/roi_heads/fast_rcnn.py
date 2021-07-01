@@ -230,21 +230,25 @@ class FastRCNNOutputLayers(nn.Module):
         scores, proposal_deltas = predictions
 
         # parse classification outputs
-        gt_classes = (
-            cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
-        )
+        gt_classes = cat([p.gt_classes if p.has("gt_classes") else torch.empty((0), dtype=torch.int64, device=proposal_deltas.device)
+                          for p in proposals], dim=0) \
+                            if len(proposals) else torch.empty((0), dtype=torch.int64, device=proposal_deltas.device)
+
         _log_classification_stats(scores, gt_classes)
 
         # parse box regression outputs
         if len(proposals):
-            proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)  # Nx4
+            proposal_boxes = cat([p.proposal_boxes.tensor if p.has("proposal_boxes") else torch.empty((0, 4), dtype=torch.float32, device=proposal_deltas.device)
+                                  for p in proposals], dim=0)  # Nx4
             assert not proposal_boxes.requires_grad, "Proposals should not require gradients!"
             # If "gt_boxes" does not exist, the proposals must be all negative and
             # should not be included in regression loss computation.
             # Here we just use proposal_boxes as an arbitrary placeholder because its
             # value won't be used in self.box_reg_loss().
             gt_boxes = cat(
-                [(p.gt_boxes if p.has("gt_boxes") else p.proposal_boxes).tensor for p in proposals],
+                [(p.gt_boxes if p.has("gt_boxes")
+                  else p.proposal_boxes if p.has("proposal_boxes")
+                  else Boxes([]).to(proposal_deltas.device)).tensor for p in proposals],
                 dim=0,
             )
         else:

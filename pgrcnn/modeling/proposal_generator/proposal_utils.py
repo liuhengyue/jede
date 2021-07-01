@@ -183,27 +183,29 @@ def add_ground_truth_to_proposals_single_image(
     if isinstance(gt, Boxes):
         # convert Boxes to Instances
         gt = Players(proposals.image_size, gt_boxes=gt)
+    if gt.has("gt_boxes"):
+        gt_boxes = gt.gt_boxes
+        device = proposals.objectness_logits.device
+        # Assign all ground-truth boxes an objectness logit corresponding to
+        # P(object) = sigmoid(logit) =~ 1.
+        gt_logit_value = math.log((1.0 - 1e-10) / (1 - (1.0 - 1e-10)))
+        gt_logits = gt_logit_value * torch.ones(len(gt_boxes), device=device)
 
-    gt_boxes = gt.gt_boxes
-    device = proposals.objectness_logits.device
-    # Assign all ground-truth boxes an objectness logit corresponding to
-    # P(object) = sigmoid(logit) =~ 1.
-    gt_logit_value = math.log((1.0 - 1e-10) / (1 - (1.0 - 1e-10)))
-    gt_logits = gt_logit_value * torch.ones(len(gt_boxes), device=device)
+        # Concatenating gt_boxes with proposals requires them to have the same fields
+        gt_proposal = Players(proposals.image_size, **gt.get_fields())
+        gt_proposal.proposal_boxes = gt_boxes
+        gt_proposal.objectness_logits = gt_logits
 
-    # Concatenating gt_boxes with proposals requires them to have the same fields
-    gt_proposal = Players(proposals.image_size, **gt.get_fields())
-    gt_proposal.proposal_boxes = gt_boxes
-    gt_proposal.objectness_logits = gt_logits
+        for key in proposals.get_fields().keys():
+            assert gt_proposal.has(
+                key
+            ), "The attribute '{}' in `proposals` does not exist in `gt`".format(key)
 
-    for key in proposals.get_fields().keys():
-        assert gt_proposal.has(
-            key
-        ), "The attribute '{}' in `proposals` does not exist in `gt`".format(key)
-
-    # NOTE: Instances.cat only use fields from the first item. Extra fields in latter items
-    # will be thrown away.
-    new_proposals = Players.cat([proposals, gt_proposal])
+        # NOTE: Instances.cat only use fields from the first item. Extra fields in latter items
+        # will be thrown away.
+        new_proposals = Players.cat([proposals, gt_proposal])
+    else:
+        new_proposals = gt
 
     return new_proposals
 

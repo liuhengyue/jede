@@ -43,7 +43,8 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
     sampled_instances = []
     keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
-        if len(instances_per_image) == 0:
+        # add support for svhn images
+        if len(instances_per_image) == 0 or (not instances_per_image.has("gt_keypoints")):
             sampled_instances.append(instances_per_image)
             continue
         keypoints = instances_per_image.gt_keypoints
@@ -60,7 +61,6 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         sampled_instances.append(instances_per_image[valid_roi_per_image])
 
     if len(heatmaps):
-
         keypoint_targets = cat(heatmaps, dim=0)
         valid = cat(valid, dim=0).to(dtype=torch.uint8)
         valid = torch.nonzero(valid).squeeze(1)
@@ -165,11 +165,13 @@ class KPGRCNNHead(KRCNNConvDeconvUpsampleHead):
                 None if self.loss_normalizer == "visible" else num_images * self.loss_normalizer
             )
             kpt_loss, sampled_keypoints_logits, sampled_instances = keypoint_rcnn_loss(x, instances, normalizer=normalizer)
-            num_instances_per_image = [len(i) for i in sampled_instances]
-            # this may not be necessary, but for consistency
+            # todo: maybe modify __len__?
+            num_instances_per_image = [len(sampled_instance) if sampled_instance.has("proposal_boxes") else 0 for sampled_instance in sampled_instances]
+            # map the keypoints logits back with each image
             sampled_keypoints_logits = sampled_keypoints_logits.split(num_instances_per_image, dim=0)
             for keypoint_logits_per_image, instances_per_image in zip(sampled_keypoints_logits, sampled_instances):
-                instances_per_image.pred_keypoints_logits = keypoint_logits_per_image
+                if instances_per_image.has("proposal_boxes"):
+                    instances_per_image.pred_keypoints_logits = keypoint_logits_per_image
             return {
                 "loss_keypoint": kpt_loss * self.loss_weight
             }, sampled_instances
