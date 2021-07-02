@@ -77,12 +77,12 @@ def transform_instance_annotations(
     if "person_bbox" in annotation:
         bbox = BoxMode.convert(annotation["person_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
         # Note that bbox is 1d (per-instance bounding box)
-        annotation["person_bbox"] = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
+        annotation["person_bbox"] = transforms.apply_box(np.array([bbox], dtype=np.float32))[0].clip(min=0)
         annotation["bbox_mode"] = BoxMode.XYXY_ABS
     if "digit_bboxes" in annotation:
         bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
         # (n, 4) if given an empty list, it will return (0, 4)
-        bbox = transforms.apply_box(np.array(bbox)).clip(min=0)
+        bbox = transforms.apply_box(np.array(bbox, dtype=np.float32)).clip(min=0)
         annotation["digit_bboxes"] = bbox
 
     if "keypoints" in annotation:

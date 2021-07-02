@@ -55,7 +55,7 @@ class JerseyNumberVisualizer(Visualizer):
             "keypoints": instance.gt_keypoints.tensor.numpy() if instance.has('gt_keypoints') else np.empty((0, 17, 3)),
             "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if instance.has('gt_digit_boxes') else np.empty((0, 4)),
             "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if instance.has('gt_digit_classes') else np.empty((0,)),
-            "category_id": instance.gt_classes.squeeze_().numpy() if instance.has('gt_classes') else np.empty((0,))
+            "category_id": instance.gt_classes.numpy() if instance.has('gt_classes') else np.empty((0,))
             })
         return {"annotations": instances_list}
 
@@ -75,7 +75,7 @@ class JerseyNumberVisualizer(Visualizer):
             keypoints   = np.array(instance.get("keypoints", np.empty((0, 4, 3))))
             digit_bboxes = np.array(instance.get("digit_bboxes", np.empty((0, 4)))).reshape((-1, 4))
             digit_ids = np.array(instance.get("digit_ids", np.empty((0,))))
-            category_id = instance.get("category_id", None)
+            category_id = instance.get("category_id", np.empty((0,)))
             bbox_mode = instance.get("bbox_mode", None)
 
 

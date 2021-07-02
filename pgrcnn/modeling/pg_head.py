@@ -259,20 +259,18 @@ class PGROIHeads(BaseROIHeads):
         del targets
 
         if self.training:
-            with torch.autograd.set_detect_anomaly(True):
-                # proposals or sampled_instances will be modified in-place
-                losses = self._forward_box(features, proposals)
-                # Usually the original proposals used by the box head are used by the mask, keypoint
-                # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
-                # predicted by the box head.
-                # losses.update(self._forward_mask(features, proposals))
-                kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
-                losses.update(kpt_loss)
-                # we may not have the instances for further training
-                if len(sampled_instances) and sum([len(ins) for ins in sampled_instances]):
-                    losses.update(self._forward_pose_guided(features, sampled_instances))
-                    losses.update(self._forward_digit_box(features, sampled_instances))
-                return proposals, losses
+            # proposals or sampled_instances will be modified in-place
+            losses = self._forward_box(features, proposals)
+            # Usually the original proposals used by the box head are used by the mask, keypoint
+            # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
+            # predicted by the box head.
+            # losses.update(self._forward_mask(features, proposals))
+            kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
+            losses.update(kpt_loss)
+            # todo: we may not have the instances for further training, but need to compute gradients
+            losses.update(self._forward_pose_guided(features, sampled_instances))
+            losses.update(self._forward_digit_box(features, sampled_instances))
+            return proposals, losses
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
@@ -338,7 +336,7 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
     # accept empty tensors, so handle it separately
     if keypoint_targets.numel() == 0 or valid.numel() == 0:
         return {'ct_loss': pred_keypoint_logits.sum() * 0,
-                'wh_loss': pred_keypoint_logits.sum() * 0}
+                'wh_loss': pred_scale_logits.sum() * 0}
 
 
 

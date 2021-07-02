@@ -83,7 +83,7 @@ class PlayerRPN(RPN):
         """
         anchors = Boxes.cat(anchors)
 
-        gt_boxes = [x.gt_boxes for x in gt_instances if x.has("gt_boxes")]
+        gt_boxes = [x.gt_boxes if x.has("gt_boxes") else Boxes([]).to(anchors.device) for x in gt_instances]
         image_sizes = [x.image_size for x in gt_instances]
         del gt_instances
 
@@ -94,7 +94,6 @@ class PlayerRPN(RPN):
             image_size_i: (h, w) for the i-th image
             gt_boxes_i: ground-truth boxes for i-th image
             """
-
             match_quality_matrix = retry_if_cuda_oom(pairwise_iou)(gt_boxes_i, anchors)
             matched_idxs, gt_labels_i = retry_if_cuda_oom(self.anchor_matcher)(match_quality_matrix)
             # Matching is memory-expensive and may result in CPU tensors. But the result is small

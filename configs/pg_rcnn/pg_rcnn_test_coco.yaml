@@ -3,18 +3,21 @@ MODEL:
   ROI_DIGIT_HEAD:
     NUM_PROPOSAL: 20
 DATASETS:
-  TRAIN: ("svhn_train",) #("keypoints_coco_2017_val_100", "jerseynumbers_train") #
-  TEST: ("keypoints_coco_2017_val_100",)
-  NUM_IMAGES: 200 # change the number of images to load
+  TRAIN: ("svhn_train", "keypoints_coco_2017_train", "jerseynumbers_train")
+#  TRAIN: ("svhn_train",)
+#  TRAIN: ("keypoints_coco_2017_val_100",)
+#  TRAIN: ("jerseynumbers_train",) #
+  TEST: ("jerseynumbers_train",)
+  NUM_IMAGES: 100 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
   TEST_VIDEO_IDS: [1]
 INPUT:
   MIN_SIZE_TRAIN: (640,)
   MIN_SIZE_TEST: 640
   AUG:
-    COPY_PASTE_MIX: 0
+    COPY_PASTE_MIX: 5
 SOLVER:
-  IMS_PER_BATCH: 2
+  IMS_PER_BATCH: 4
   BASE_LR: 0.0002 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (1500, )
   MAX_ITER: 2000

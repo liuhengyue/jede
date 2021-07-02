@@ -5,6 +5,7 @@ import numpy as np
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
 
+from .jerseynumbers import KEYPOINT_NAMES, COCO_PERSON_KEYPOINT_FLIP_MAP, KEYPOINT_CONNECTION_RULES
 # DATASET_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../datasets/svhn'))
 DATASET_ROOT = 'datasets/svhn'
 
@@ -125,9 +126,9 @@ def get_dicts(root: str,
         return annotations
 
 if os.path.exists(DATASET_ROOT):
-    DatasetCatalog.register("svhn_train", lambda: get_dicts(DATASET_ROOT, "train"))
+    DatasetCatalog.register("svhn_train", lambda: get_dicts(DATASET_ROOT, "train", num_images=-1))
     metadataCat = MetadataCatalog.get("svhn_train")
     metadataCat.set(thing_classes=CLASS_NAMES)
-    metadataCat.set(keypoint_names=())
-    metadataCat.set(keypoint_connection_rules=())
-    metadataCat.set(keypoint_flip_map=())
+    metadataCat.set(keypoint_names=KEYPOINT_NAMES)
+    metadataCat.set(keypoint_connection_rules=KEYPOINT_CONNECTION_RULES)
+    metadataCat.set(keypoint_flip_map=COCO_PERSON_KEYPOINT_FLIP_MAP)

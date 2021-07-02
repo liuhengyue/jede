@@ -1,16 +1,13 @@
 # a modification of 'MapDataset' in detectron2.data.common
-import copy
-import itertools
 import logging
-import numpy as np
-import pickle
+from typing import Dict, Tuple, List
 import random
 import torch.utils.data as data
 from torch.utils.data.sampler import Sampler
 
 from detectron2.utils.serialize import PicklableWrapper
 
-class MapDataset(data.Dataset):
+class MapAugDataset(data.Dataset):
     """
     Map a function over the elements in a dataset.
 
@@ -22,7 +19,13 @@ class MapDataset(data.Dataset):
             elements from the dataset.
     """
 
-    def __init__(self, dataset, map_func, copy_paste_mix=0, applicable_dict=None, applicable_inds=None):
+    def __init__(self,
+                 dataset,
+                 map_func,
+                 copy_paste_mix=0,
+                 applicable_dict: Dict[int, Tuple[int, int]] = None,
+                 applicable_inds: Dict[int, List[int]] = None
+                 ):
         self._dataset = dataset
         self._map_func = PicklableWrapper(map_func)  # wrap so that a lambda will work
 
@@ -39,11 +42,12 @@ class MapDataset(data.Dataset):
         retry_count = 0
         cur_idx = int(idx)
         while True:
-            if self._copy_paste_mix and self._applicable_dict[cur_idx]:
+            applicable, dataset_idx = self._applicable_dict[cur_idx]
+            if self._copy_paste_mix and applicable:
                 # generate a list of random ids to load multiple images
                 mix_size = self._rng.randint(0, self._copy_paste_mix)
                 # with replacement (good for when dataset smaller than mix_size)
-                extra_inds = self._rng.choices(self._applicable_inds, k=mix_size)
+                extra_inds = self._rng.choices(self._applicable_inds[dataset_idx], k=mix_size)
                 data = self._map_func([self._dataset[cur_idx]] + [self._dataset[i] for i in extra_inds])
             else:
                 data = self._map_func(self._dataset[cur_idx])

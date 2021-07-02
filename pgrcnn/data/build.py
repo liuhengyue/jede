@@ -21,9 +21,9 @@ from detectron2.data.detection_utils import check_metadata_consistency
 from detectron2.data.build import get_detection_dataset_dicts, worker_init_reset_seed, trivial_batch_collator,\
 load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_images_with_few_keypoints
 from detectron2.data.samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
-from detectron2.data import DatasetMapper
+from detectron2.data import MapDataset
 
-from pgrcnn.data import MapDataset, JerseyNumberDatasetMapper, WeightedTrainingSampler
+from pgrcnn.data import MapAugDataset, JerseyNumberDatasetMapper, WeightedTrainingSampler
 
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
@@ -137,7 +137,8 @@ def build_detection_train_loader(cfg, mapper=None):
     dataset_dicts, (weights, applicable_dict, applicable_inds) = get_detection_dataset_dicts(
         cfg.DATASETS.TRAIN,
         filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
-        min_keypoints=0, # do not filter images without keypoints
+        min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
+        if cfg.MODEL.KEYPOINT_ON else 0,
         proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
     )
     dataset = DatasetFromList(dataset_dicts, copy=False)
@@ -145,7 +146,7 @@ def build_detection_train_loader(cfg, mapper=None):
     if mapper is None:
         mapper = JerseyNumberDatasetMapper(cfg, True)
 
-    dataset = MapDataset(dataset, mapper,
+    dataset = MapAugDataset(dataset, mapper,
                          copy_paste_mix=cfg.INPUT.AUG.COPY_PASTE_MIX,
                          applicable_dict=applicable_dict,
                          applicable_inds=applicable_inds)
@@ -248,7 +249,7 @@ def print_instances_class_histogram(dataset_dicts, class_names):
     for entry in dataset_dicts:
         annos = entry["annotations"]
         classes = [x["category_id"] for x in annos if not x.get("iscrowd", 0) and ("category_id" in x)]
-        classes += [digit_id for x in annos for digit_id in x["digit_ids"] if x.get("digit_ids", 0)]
+        classes += [digit_id for x in annos if "digit_ids" in x for digit_id in x["digit_ids"]]
         histogram += np.histogram(classes, bins=hist_bins)[0]
 
     N_COLS = min(6, len(class_names) * 2)
@@ -311,8 +312,8 @@ def get_detection_dataset_dicts(
         ]
 
     weights = []
-    applicables = {}
-    jerseynumber_inds = []
+    applicables = {} # Dict[Tuple]
+    jerseynumber_inds = {i: [] for i in range(len(dataset_dicts))}
     start_ind = 0
 
     for i, dicts in enumerate(dataset_dicts):
@@ -321,7 +322,7 @@ def get_detection_dataset_dicts(
         if filter_empty and has_instances and "sem_seg_file_name" not in dicts[0]:
             dataset_dicts[i] = filter_images_with_only_crowd_annotations(dicts)
 
-        if min_keypoints > 0 and has_instances:
+        if min_keypoints > 0 and has_instances and ("coco" in dataset_names[i]):
             dataset_dicts[i] = filter_images_with_few_keypoints(dicts, min_keypoints)
 
         if has_instances:
@@ -333,12 +334,13 @@ def get_detection_dataset_dicts(
                 pass
             # get the mapping from data index to the weight probability, and dataset source
             # record if the data can be applied with CopyPasteMix
-            has_jerseynumber = 'digit_bboxes' in dicts[0]['annotations'][0] # and ('person_bbox' in dicts[0]['annotations'][0])
+            has_jerseynumber = 'digit_bboxes' in dataset_dicts[i][0]['annotations'][0]
             for j, dataset_dict in enumerate(dataset_dicts[i]):
-                applicables[start_ind + j] = has_jerseynumber
+                data_id = start_ind + j
+                applicables[data_id] = (has_jerseynumber, i)
                 weights.append( 1 / (len(dataset_dicts) * len(dataset_dicts[i])) )
                 if has_jerseynumber:
-                    jerseynumber_inds.append(start_ind + j)
+                    jerseynumber_inds[i].append(data_id)
             start_ind += len(dataset_dicts[i])
 
     #

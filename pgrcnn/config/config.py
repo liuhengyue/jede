@@ -59,7 +59,7 @@ def add_poseguide_config(cfg):
 
     _C.MODEL.ROI_HEADS.NAME = "PGROIHeads"
 
-    _C.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE = 0 # we can train without keypoints
+    _C.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE = 1 # we can train without keypoints
 
     _C.MODEL.ROI_DIGIT_HEAD = CN()
     _C.MODEL.ROI_DIGIT_HEAD.NAME = "Kpts2DigitHead"
