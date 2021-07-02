@@ -162,7 +162,7 @@ def build_detection_train_loader(cfg, mapper=None):
         )
         sampler = RepeatFactorTrainingSampler(repeat_factors)
     elif sampler_name == "WeightedTrainingSampler":
-        sampler = WeightedTrainingSampler(weights, len(dataset), replacement=False)
+        sampler = WeightedTrainingSampler(weights, len(dataset), replacement=True)
     else:
         raise ValueError("Unknown training sampler: {}".format(sampler_name))
 
@@ -358,5 +358,3 @@ def get_detection_dataset_dicts(
 
     return dataset_dicts, (weights, applicables, jerseynumber_inds)
 
-def get_sample_weights(dataset_dicts):
-    pass

@@ -3,7 +3,7 @@ MODEL:
   ROI_DIGIT_HEAD:
     NUM_PROPOSAL: 20
 DATASETS:
-  TRAIN: ("svhn_train", "keypoints_coco_2017_train", "jerseynumbers_train")
+  TRAIN: ("svhn_train", "keypoints_coco_2017_val_100", "jerseynumbers_train")
 #  TRAIN: ("svhn_train",)
 #  TRAIN: ("keypoints_coco_2017_val_100",)
 #  TRAIN: ("jerseynumbers_train",) #
