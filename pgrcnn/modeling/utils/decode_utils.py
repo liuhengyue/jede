@@ -48,7 +48,7 @@ def _topk(scores, K=40, largest=True):
 
     return topk_score, topk_inds, topk_clses, topk_ys, topk_xs
 
-def _sample_top_n_bttm_k(scores, K=10, ratio=1/2):
+def _sample_top_n_bttm_k(scores, K=10, ratio=5/8):
     topk = _topk(scores, K= round(K * ratio))
     bttm2k = _topk(scores, K=round(K * (1 - ratio)), largest=False)
     return [torch.cat((t, b), dim=-1) for t, b in zip(topk, bttm2k)]

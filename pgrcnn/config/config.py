@@ -57,6 +57,9 @@ def add_poseguide_config(cfg):
     _C.DATASETS.PAD_TO_FULL = True # if true, we use all 17 keypoints, o/w use 4
     _C.DATASETS.KEYPOINTS_INDS = [5, 6, 12, 11] # the indices of keypoints we have in the order wrt COCO
 
+    # _C.MODEL.RPN.PRE_NMS_TOPK_TRAIN = 6000
+    # _C.MODEL.RPN.POST_NMS_TOPK_TRAIN = 1000
+
     _C.MODEL.ROI_HEADS.NAME = "PGROIHeads"
 
     _C.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE = 1 # we can train without keypoints
@@ -64,6 +67,7 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_HEAD = CN()
     _C.MODEL.ROI_DIGIT_HEAD.NAME = "Kpts2DigitHead"
     _C.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES = True
+    _C.MODEL.ROI_DIGIT_HEAD.BBOX_REG_LOSS_TYPE = "smooth_l1"
     _C.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES = 10
     _C.MODEL.ROI_DIGIT_HEAD.DEFORMABLE = False
     _C.MODEL.ROI_DIGIT_HEAD.TRANSFORM_DIM = 9 # legacy
@@ -75,6 +79,9 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_HEAD.FC_DIM = 256
     _C.MODEL.ROI_DIGIT_HEAD.NORM = ""
     _C.MODEL.ROI_DIGIT_HEAD.FOCAL_BIAS = -2.19 # −log((1−pi)/pi), pi=0.1 -> -2.19
+    _C.MODEL.ROI_DIGIT_HEAD.SCORE_THRESH_TEST = 0.05
+    _C.MODEL.ROI_DIGIT_HEAD.NMS_THRESH_TEST = 0.5
+    _C.MODEL.ROI_DIGIT_HEAD.OFFSET_REG = True
     # input
     _C.INPUT.RANDOM_FLIP = "none" # we do not flip since it does not make sense to flip a digit
     # augmentation

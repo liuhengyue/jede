@@ -10,14 +10,14 @@ import tqdm
 from fvcore.common.file_io import PathManager
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
-from detectron2.structures import Boxes, BoxMode
+from detectron2.structures import BoxMode
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from pgrcnn.utils.launch_utils import setup
-from pgrcnn.structures.players import Players as Instances
+from pgrcnn.structures import Players, Boxes
 
 
 def create_instances(predictions, image_size):
-    ret = Instances(image_size)
+    ret = Players(image_size)
 
     score = np.asarray([x["score"] for x in predictions])
     labels = [dataset_id_map(p["category_id"]) for p in predictions]
@@ -28,16 +28,13 @@ def create_instances(predictions, image_size):
     bbox = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS) if bbox.size > 0 else bbox
 
     labels = np.asarray([labels[i] for i in chosen])
-    keypoints = np.asarray([x["keypoints"] for x in predictions if "keypoints" in x]).reshape((-1, 4, 3))
+    keypoints = np.asarray([x["keypoints"] for x in predictions if "keypoints" in x]).reshape((-1, 17, 3))
     # todo - customize for jersey number data
     ret.scores = score
     ret.pred_boxes = Boxes(bbox)
     ret.pred_classes = labels
+    # ret.pred_keypoints = keypoints
 
-    try:
-        ret.pred_masks = [predictions[i]["segmentation"] for i in chosen]
-    except KeyError:
-        pass
     return ret
 
 
@@ -47,14 +44,13 @@ if __name__ == "__main__":
     )
     # parser.add_argument("--input", required=True, help="JSON file produced by the model")
     # parser.add_argument("--output", required=True, help="output directory")
-    parser.add_argument("--config-file", help="config file path", default="configs/pg_rcnn/pg_rcnn_base.yaml")
+    parser.add_argument("--config-file", help="config file path", default="configs/pg_rcnn/pg_rcnn_test.yaml")
     parser.add_argument("--dataset", help="name of the dataset", default="jerseynumbers_val")
     parser.add_argument("--p-conf-threshold", default=0.5, type=float, help="person confidence threshold")
     parser.add_argument("--d-conf-threshold", default=0.5, type=float, help="digit confidence threshold")
     args = parser.parse_args()
     # lazy add config file
-    # args.config_file = "../../configs/pg_rcnn_R_50_FPN_1x_test_2.yaml"
-    args.config_file = "projects/PGRcnn/configs/pg_rcnn/pg_rcnn_base.yaml"
+    # args.config_file = ""
     cfg = setup(args)
     # modify args from cfg
     args.input = os.path.join(cfg.OUTPUT_DIR, "inference/coco_instances_results.json")

@@ -24,6 +24,8 @@ from detectron2.data import DatasetCatalog, MetadataCatalog
 from pgrcnn.structures import Boxes
 from pgrcnn.data.dataset_mapper import DatasetMapper
 from pgrcnn.data.build import build_sequential_dataloader
+from pgrcnn.data.det_utils import pad_full_keypoints
+
 logger = logging.getLogger(__name__)
 
 _SMALL_OBJECT_AREA_THRESH = 1000
@@ -36,7 +38,7 @@ _KEYPOINT_THRESHOLD = 0.05
 
 
 class JerseyNumberVisualizer(Visualizer):
-    def __init__(self, img_rgb, metadata, scale=1.0, instance_mode=ColorMode.IMAGE):
+    def __init__(self, img_rgb, metadata, scale=2.0, instance_mode=ColorMode.IMAGE):
         super().__init__(img_rgb, metadata, scale=scale, instance_mode=instance_mode)
 
 
@@ -75,7 +77,7 @@ class JerseyNumberVisualizer(Visualizer):
             keypoints   = np.array(instance.get("keypoints", np.empty((0, 4, 3))))
             digit_bboxes = np.array(instance.get("digit_bboxes", np.empty((0, 4)))).reshape((-1, 4))
             digit_ids = np.array(instance.get("digit_ids", np.empty((0,))))
-            category_id = instance.get("category_id", np.empty((0,)))
+            category_id = np.array([instance.get("category_id")]) if "category_id" in instance else np.empty((0,))
             bbox_mode = instance.get("bbox_mode", None)
 
 
@@ -85,7 +87,10 @@ class JerseyNumberVisualizer(Visualizer):
             digit_bboxes = digit_bboxes[np.where(~np.all(digit_bboxes == 0, axis=1))]
             digit_ids = digit_ids[np.where(digit_ids > -1)].tolist()
 
-            keypts = keypoints.reshape(1, -1, 3) if keypoints is not None else None
+            keypoints = pad_full_keypoints(keypoints)
+            # no corresponding keypoint annotation
+            if person_bbox.size and (not keypoints.size):
+                keypoints = np.zeros((1, keypoints.shape[1], keypoints.shape[2]), dtype=np.float32)
 
             # here, we have two different bbox (person and digit)
             if bbox_mode is not None:
@@ -102,7 +107,7 @@ class JerseyNumberVisualizer(Visualizer):
                     labels = [names[i] for i in labels]
                     digit_labels = [names[i] for i in digit_ids]
             if len(labels):
-                self.overlay_instances(labels=labels, boxes=person_bbox, masks=None, keypoints=keypts)
+                self.overlay_instances(labels=labels, boxes=person_bbox, masks=None, keypoints=keypoints)
             if len(digit_labels):
                 self.overlay_instances(labels=digit_labels, boxes=digit_bboxes, masks=None, keypoints=None)
             return self.output

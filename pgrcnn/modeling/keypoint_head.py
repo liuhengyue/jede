@@ -15,7 +15,7 @@ from pgrcnn.structures.players import Players as Instances
 
 _TOTAL_SKIPPED = 0
 
-def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_kpts=3):
+def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_kpts=0):
     """
     Arguments:
         pred_keypoint_logits (Tensor): A tensor of shape (N, K, S, S) where N is the total number
@@ -76,7 +76,9 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         _TOTAL_SKIPPED += 1
         storage = get_event_storage()
         storage.put_scalar("kpts_num_skipped_batches", _TOTAL_SKIPPED, smoothing_hint=False)
-        return pred_keypoint_logits.sum() * 0, torch.empty((0, K, H, W)), sampled_instances
+        return pred_keypoint_logits.sum() * 0, \
+               torch.empty((0, K, H, W), dtype=torch.float32, device=pred_keypoint_logits.device), \
+               sampled_instances
 
     # shape (N', 4, 56, 56)
     pred_keypoint_logits_valid = pred_keypoint_logits[valid_rois]

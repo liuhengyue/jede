@@ -1,10 +1,12 @@
 _BASE_: "../../pg_rcnn_base.yaml"
 DATASETS:
-  TRAIN: ("svhn_train", "keypoints_coco_2017_train", "jerseynumbers_train")
+  TRAIN: ("jerseynumbers_train",)
   TRAIN_VIDEO_IDS: [1,2,3]
   TEST_VIDEO_IDS: [0]
+MODEL:
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
 INPUT:
-#  MAX_SIZE_TEST: 240
+#  MAX_SIZE_TEST: 480
   AUG:
     COPY_PASTE_MIX: 22
 DATALOADER:
@@ -14,4 +16,4 @@ SOLVER:
   BASE_LR: 0.0002 # when IMS_PER_BATCH = 16, LR is 0.02
 #  STEPS: ()
 #  MAX_ITER: 40000
-OUTPUT_DIR: ./output/pg_rcnn/aug/datasets_mix/test_0
+OUTPUT_DIR: ./output/pg_rcnn/aug/datasets_mix/pretrain_test_0

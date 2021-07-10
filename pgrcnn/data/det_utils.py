@@ -27,6 +27,25 @@ from pgrcnn.data import augmentation_impl as custom_T
 # each person will only have at most 2 digits which we pad to
 MAX_DIGIT_PER_INSTANCE = 2
 
+def pad_full_keypoints(kpts, keypoints_inds=[5, 6, 12, 11], num_keypoints=17):
+    """
+
+    Args:
+        kpts: np.array of shape or (4, 3) or (12,)
+        keypoints_inds: the mapping of available annotation to full keypoints
+        num_keypoints: 17 for COCO
+
+    Returns:
+
+    """
+
+    kpts = kpts.reshape(-1, 4, 3)
+    assert kpts.shape[1:] == (4, 3), "wrong shape of kpts: {}, only takes shape of (1, 4, 3) ".format(kpts.shape)
+    full_keypoints = np.zeros((kpts.shape[0], num_keypoints, 3), dtype=np.float32)
+    # the keypoints order is left_sholder, right_shoulder, right_hip, left_hip
+    full_keypoints[:, keypoints_inds, :] = kpts
+    return full_keypoints
+
 def transform_instance_annotations(
         annotation, transforms, image_size, *,
         keypoint_hflip_indices=None,
@@ -90,7 +109,7 @@ def transform_instance_annotations(
         # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
         # indice: "left_shoulder" 5, "right_shoulder", 6, "left_hip", 11 "right_hip", 12
         num_keypoints = 17 if pad_to_full else 4
-        full_keypoints = np.zeros((num_keypoints, 3))
+        full_keypoints = np.zeros((num_keypoints, 3), dtype=np.float64)
         if len(annotation["keypoints"]) > 0:
             keypoints = transform_keypoint_annotations(
                 annotation["keypoints"], transforms, image_size, keypoint_hflip_indices

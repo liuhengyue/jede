@@ -153,16 +153,18 @@ class PGROIHeads(BaseROIHeads):
                                              dtype=torch.float32, device=device)
                            for b in instances], dim=0)
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
-        center_heatmaps, scale_heatmaps = self.digit_head(kpts_logits, box_features)
+        center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_head(kpts_logits, box_features)
         if self.training:
-            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, instances, normalizer=None)
+            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps, instances)
             with torch.no_grad():
                 bboxes_flat = cat([b.proposal_boxes.tensor if b.has("proposal_boxes")
                                    else torch.empty((0, 4), dtype=torch.float32, device=device)
                                    for b in instances], dim=0)
                 # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
-                                         K=self.num_ctdet_proposal, feature_scale="feature")
+                                          reg=offset_heatmaps,
+                                          K=self.num_ctdet_proposal,
+                                          feature_scale="feature")
                 # todo: has duplicate boxes
                 len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                 detections = list(detections.split(len_instances))
@@ -175,7 +177,10 @@ class PGROIHeads(BaseROIHeads):
             bboxes_flat = cat([b.pred_boxes.tensor for b in instances], dim=0)
             # (N, num of candidates, (x1, y1, x2, y2, score, center 0 /left 1/right 2)
             detection = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
-                                     K=self.num_ctdet_proposal, feature_scale="feature", training=False)
+                                     reg=offset_heatmaps,
+                                     K=self.num_ctdet_proposal,
+                                     feature_scale="feature",
+                                     training=False)
             detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))
             detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
             # assign new fields to instances
@@ -267,7 +272,6 @@ class PGROIHeads(BaseROIHeads):
             # losses.update(self._forward_mask(features, proposals))
             kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
             losses.update(kpt_loss)
-            # todo: we may not have the instances for further training, but need to compute gradients
             losses.update(self._forward_pose_guided(features, sampled_instances))
             losses.update(self._forward_digit_box(features, sampled_instances))
             return proposals, losses
@@ -299,8 +303,15 @@ def gaussian_focal_loss(pred, gaussian_target, alpha=2.0, gamma=4.0, eps=1e-12):
     return pos_loss + neg_loss
 
 
-def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer, size_weight=0.1,
-                 ):
+def pg_rcnn_loss(
+        pred_keypoint_logits,
+        pred_scale_logits,
+        pred_offset_logits,
+        instances,
+        normalizer=None,
+        size_weight=0.1,
+        offset_weight=1.0
+        ):
     """
     Wrap center and size loss here.
     We treat the predicted centers as keypoints.
@@ -313,30 +324,38 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
             that are in 1:1 correspondence with pred_keypoint_logits.
             Each Instances should contain a `gt_keypoints` field containing a `structures.Keypoint`
             instance.
-        normalizer (float): Normalize the loss by this amount.
+        normalizer (Union[float, None]): Normalize the loss by this amount.
             If not specified, we normalize by the number of visible keypoints in the minibatch.
+        size_weight (float): Weight for the size regression loss.
 
     Returns a scalar tensor containing the loss.
     """
+    has_offset_reg = pred_offset_logits is not None
     heatmaps = []
     valid = []
     scale_targets = []
+    offset_targets =[]
     # keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
-        heatmaps_per_image, scales_per_image, valid_per_image = \
-            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:])
+        heatmaps_per_image, scales_per_image, offsets_per_image, valid_per_image = \
+            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:], offset_reg=has_offset_reg)
         heatmaps.append(heatmaps_per_image)
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
+        offset_targets.append(offsets_per_image)
     # should be safe since we return empty tensors from `compute_targets'
     keypoint_targets = cat(heatmaps, dim=0)
     valid = cat(valid, dim=0)
     scale_targets = cat(scale_targets, dim=0)
+
     # torch.mean (in binary_cross_entropy_with_logits) doesn't
     # accept empty tensors, so handle it separately
     if keypoint_targets.numel() == 0 or valid.numel() == 0:
-        return {'ct_loss': pred_keypoint_logits.sum() * 0,
+        loss = {'ct_loss': pred_keypoint_logits.sum() * 0,
                 'wh_loss': pred_scale_logits.sum() * 0}
+        if has_offset_reg:
+            loss.update({"os_loss": pred_offset_logits.sum() * 0})
+        return loss
 
 
 
@@ -355,5 +374,11 @@ def pg_rcnn_loss(pred_keypoint_logits, pred_scale_logits, instances, normalizer,
     pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
     # we predict the scale wrt. feature box
     wh_loss = size_weight * F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+    loss = {'ct_loss': ct_loss, 'wh_loss': wh_loss}
+    if has_offset_reg:
+        offset_targets = cat(offset_targets, dim=0)
+        pred_offset_logits = pred_offset_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
+        os_loss = offset_weight * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
+        loss.update({"os_loss": os_loss})
 
-    return {'ct_loss': ct_loss, 'wh_loss': wh_loss}
+    return loss

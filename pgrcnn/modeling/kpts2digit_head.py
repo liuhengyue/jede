@@ -12,93 +12,6 @@ from detectron2.modeling.backbone.resnet import DeformBottleneckBlock
 
 ROI_DIGIT_HEAD_REGISTRY = Registry("ROI_DIGIT_HEAD")
 
-@ROI_DIGIT_HEAD_REGISTRY.register()
-class Kpts2MatHead(nn.Module):
-    @configurable
-    def __init__(self, transform_dim: int, num_proposal: int, input_shape: ShapeSpec, *,
-                 conv_dims: List[int], fc_dims: List[int], conv_norm=""):
-        super().__init__()
-        assert len(conv_dims) + len(fc_dims) > 0
-
-        self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
-
-        self.conv_norm_relus = []
-
-        self.num_proposal = num_proposal
-        self.transform_dim = transform_dim
-
-        for k, conv_dim in enumerate(conv_dims):
-            conv = Conv2d(
-                self._output_size[0],
-                conv_dim,
-                kernel_size=3,
-                padding=1,
-                bias=not conv_norm,
-                norm=get_norm(conv_norm, conv_dim),
-                activation=F.relu,
-            )
-            self.add_module("conv{}".format(k + 1), conv)
-            self.conv_norm_relus.append(conv)
-            self._output_size = (conv_dim, self._output_size[1], self._output_size[2])
-
-        self.fcs = []
-        for k, fc_dim in enumerate(fc_dims):
-            fc = Linear(np.prod(self._output_size), fc_dim)
-            self.add_module("fc{}".format(k + 1), fc)
-            self.fcs.append(fc)
-            self._output_size = fc_dim
-
-        # add final regression layer to 3x3 matrix
-        output_mat_fc = Linear(np.prod(self._output_size), num_proposal * transform_dim)
-        weight_init.c2_xavier_fill(output_mat_fc)
-        self.add_module("fc_perspective_pars", output_mat_fc)
-        self._output_size = transform_dim
-        for layer in self.conv_norm_relus:
-            weight_init.c2_msra_fill(layer)
-        for layer in self.fcs:
-            weight_init.c2_xavier_fill(layer)
-
-    def forward(self, x):
-        for layer in self.conv_norm_relus:
-            x = layer(x)
-        if len(self.fcs):
-            if x.dim() > 2:
-                x = torch.flatten(x, start_dim=1)
-            for layer in self.fcs:
-                x = F.relu(layer(x))
-        x = self.fc_perspective_pars(x) # no activation since the values are not bounded
-        x = x.view(-1, self.num_proposal, self.transform_dim)
-        return x
-
-    @classmethod
-    def from_config(cls, cfg, input_shape):
-        num_conv = cfg.MODEL.ROI_DIGIT_HEAD.NUM_CONV
-        conv_dim = cfg.MODEL.ROI_DIGIT_HEAD.CONV_DIM
-        num_fc = cfg.MODEL.ROI_DIGIT_HEAD.NUM_FC
-        fc_dim = cfg.MODEL.ROI_DIGIT_HEAD.FC_DIM
-
-        return {
-            "transform_dim": cfg.MODEL.ROI_DIGIT_HEAD.TRANSFORM_DIM,
-            "input_shape": input_shape,
-            "conv_dims": [conv_dim] * num_conv,
-            "fc_dims": [fc_dim] * num_fc,
-            "conv_norm": cfg.MODEL.ROI_DIGIT_HEAD.NORM,
-            "num_proposal": cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL,
-            "use_deform": cfg.MODEL.ROI_DIGIT_HEAD.DEFORMABLE
-        }
-
-    @property
-    def output_shape(self):
-        """
-        Returns:
-            ShapeSpec: the output feature shape
-        """
-        o = self._output_size
-        if isinstance(o, int):
-            return ShapeSpec(channels=o)
-        else:
-            return ShapeSpec(channels=o[0], height=o[1], width=o[2])
-
 
 @ROI_DIGIT_HEAD_REGISTRY.register()
 class Kpts2DigitHead(nn.Module):
@@ -114,7 +27,8 @@ class Kpts2DigitHead(nn.Module):
                  conv_norm="",
                  use_person_box_features=True,
                  num_interests=1,
-                 focal_bias=0.01
+                 focal_bias=0.01,
+                 offset_reg=True
                  ):
         """
 
@@ -141,6 +55,9 @@ class Kpts2DigitHead(nn.Module):
         self.num_proposal = num_proposal
         self.transform_dim = transform_dim
         self.use_person_box_features = use_person_box_features
+        self.offset_reg = offset_reg
+        if self.offset_reg:
+            self.offset_head = []
         # 1x1 conv to compress K keypoint maps
         compress = False
         if compress:
@@ -278,25 +195,27 @@ class Kpts2DigitHead(nn.Module):
 
 
     def _init_output_layers(self, conv_norm, conv_dims, num_interests=1):
-        # need a few convs
+        ### add center, scale, and offset heads ###
+
+        # The conv dims currently are same
         in_channels = self._output_size[0]
-        for idx, conv_dim in enumerate(conv_dims, 1):
-            module = Conv2d(self._output_size[0],
-                            conv_dim,
+        conv_dims = [in_channels] + conv_dims
+        for idx in range(1, len(conv_dims)):
+            module = Conv2d(conv_dims[idx-1],
+                            conv_dims[idx],
                             kernel_size=3,
                             stride=1,
                             padding=1,
                             bias=not conv_norm,
-                            norm=get_norm(conv_norm, conv_dim),
+                            norm=get_norm(conv_norm, conv_dims[idx]),
                             activation=F.relu,
                             )
             self.add_module("ct_conv{}".format(idx), module)
             self.ct_head.append(module)
-            self._output_size = (conv_dim, self._output_size[1], self._output_size[2])
-        # add center and scale heads
+
         # 3 cls: left digit, center digit, right digit
         head = Conv2d(
-            self._output_size[0],
+            conv_dims[-1],
             num_interests,
             kernel_size=1,
             bias=True,
@@ -306,22 +225,21 @@ class Kpts2DigitHead(nn.Module):
         self.add_module("center_heatmaps", head)
         self.ct_head.append(head)
         # size head
-        for idx, conv_dim in enumerate(conv_dims, 1):
-            module = Conv2d(in_channels,
-                            conv_dim,
+        for idx in range(1, len(conv_dims)):
+            module = Conv2d(conv_dims[idx - 1],
+                            conv_dims[idx],
                             kernel_size=3,
                             stride=1,
                             padding=1,
                             bias=not conv_norm,
-                            norm=get_norm(conv_norm, conv_dim),
+                            norm=get_norm(conv_norm, conv_dims[idx]),
                             activation=F.relu,
                             )
             self.add_module("size_conv{}".format(idx), module)
             self.size_head.append(module)
-            in_channels = conv_dim
 
         head = Conv2d(
-            in_channels,
+            conv_dims[-1],
             2,
             kernel_size=1,
             bias=True,
@@ -330,6 +248,32 @@ class Kpts2DigitHead(nn.Module):
         )
         self.add_module("size_heatmaps", head)
         self.size_head.append(head)
+
+        # optional center offset prediction
+        if self.offset_reg:
+            for idx in range(1, len(conv_dims)):
+                module = Conv2d(conv_dims[idx - 1],
+                                conv_dims[idx],
+                                kernel_size=3,
+                                stride=1,
+                                padding=1,
+                                bias=not conv_norm,
+                                norm=get_norm(conv_norm, conv_dims[idx]),
+                                activation=F.relu,
+                                )
+                self.add_module("offset_conv{}".format(idx), module)
+                self.offset_head.append(module)
+
+            head = Conv2d(
+                conv_dims[-1],
+                2,
+                kernel_size=1,
+                bias=True,
+                norm=None,
+                activation=None,
+            )
+            self.add_module("offset_heatmaps", head)
+            self.offset_head.append(head)
 
     def forward(self, kpts_features, box_features):
         for layer in self.conv_norm_relus:
@@ -347,8 +291,14 @@ class Kpts2DigitHead(nn.Module):
             x = layer(x)
         for layer in self.size_head:
             y = layer(y)
-        # center heatmaps, and size heatmaps
-        return [x, y]
+        if self.offset_reg:
+            z = kpts_features
+            for layer in self.offset_head:
+                z = layer(z)
+        else:
+            z = None
+        # center, size, offset heatmaps
+        return [x, y, z]
 
     @classmethod
     def from_config(cls, cfg, input_shapes):
@@ -368,7 +318,8 @@ class Kpts2DigitHead(nn.Module):
             "use_deform": cfg.MODEL.ROI_DIGIT_HEAD.DEFORMABLE,
             "use_person_box_features": cfg.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES,
             "num_interests": cfg.DATASETS.NUM_INTERESTS,
-            "focal_bias": cfg.MODEL.ROI_DIGIT_HEAD.FOCAL_BIAS
+            "focal_bias": cfg.MODEL.ROI_DIGIT_HEAD.FOCAL_BIAS,
+            "offset_reg": cfg.MODEL.ROI_DIGIT_HEAD.OFFSET_REG
         }
 
     @property

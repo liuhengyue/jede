@@ -7,8 +7,9 @@ import torch.nn.functional as F
 from pgrcnn.structures import Players
 def compute_targets(
         instances_per_image: Players,
-        heatmap_size: Tuple[int, int, int]
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        heatmap_size: Tuple[int, int, int],
+        offset_reg: bool = True
+) -> Tuple[torch.Tensor, torch.Tensor, Union[torch.Tensor, None], torch.Tensor]:
     """
         Encode keypoint locations into a target heatmap for use in Gaussian Focal loss.
 
@@ -26,6 +27,7 @@ def compute_targets(
         device = instances_per_image.gt_digit_boxes[0].device
         return torch.empty((0, K, H, W), device=device), \
                torch.empty((0, 2), dtype=torch.float, device=device), \
+               torch.empty((0, 2), dtype=torch.float, device=device) if offset_reg else None, \
                torch.empty((0, 3), dtype=torch.long, device=device)
     pred_keypoint_logits = instances_per_image.pred_keypoints_logits
     # we define a zero tensor as the output heatmaps
@@ -35,6 +37,7 @@ def compute_targets(
     if (not instances_per_image.has("gt_digit_centers")) or rois.numel() == 0:
         return heatmaps, \
                torch.zeros((0, 2), dtype=torch.float, device=pred_keypoint_logits.device), \
+               torch.empty((0, 2), dtype=torch.float, device=pred_keypoint_logits.device) if offset_reg else None, \
                torch.zeros((0, 3), dtype=torch.long, device=pred_keypoint_logits.device)
     keypoints = instances_per_image.gt_digit_centers
     scales = instances_per_image.gt_digit_scales
@@ -43,6 +46,7 @@ def compute_targets(
     valid = []
     # gt scale targets
     scale_targets = []
+    offset_targets = []
     offset_x = rois[:, 0]
     offset_y = rois[:, 1]
     scale_x = W / (rois[:, 2] - rois[:, 0])
@@ -58,8 +62,12 @@ def compute_targets(
         y_boundary_inds = y == roi[3]
 
         x = (x - dx) * dw
-        x = x.floor().long()
         y = (y - dy) * dh
+        if offset_reg:
+            # also compute a offset shift for prediction
+            x_offset_reg = x - x.floor().long()
+            y_offset_reg = y - y.floor().long()
+        x = x.floor().long()
         y = y.floor().long()
 
         x[x_boundary_inds] = W - 1
@@ -80,8 +88,16 @@ def compute_targets(
             torch.stack(((torch.ones_like(x) * i).long(), y, x), dim=1)
         )
         scale_targets.append(scale)
+        if offset_reg:
+            y_offset_reg = y_offset_reg[valid_loc]
+            x_offset_reg = x_offset_reg[valid_loc]
+            offset_targets.append(torch.stack((x_offset_reg, y_offset_reg), dim=1))
+
     # we may have different number of valid points within each roi, so cat
-    return heatmaps, torch.cat(scale_targets, dim=0), torch.cat(valid, dim=0)
+    return heatmaps, \
+           torch.cat(scale_targets, dim=0), \
+           torch.cat(offset_targets, dim=0) if len(offset_targets) else None, \
+           torch.cat(valid, dim=0)
 
 
 
@@ -160,7 +176,7 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
     return out_heatmap
 
 
-def gaussian_radius(det_size, min_overlap=0.3):
+def gaussian_radius(det_size, min_overlap=0.1):
     r"""Generate 2D gaussian radius.
 
     Args:
