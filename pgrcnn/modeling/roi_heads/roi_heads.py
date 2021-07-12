@@ -276,7 +276,6 @@ class BaseROIHeads(StandardROIHeads):
         """
         num_fg_samples = []
         num_bg_samples = []
-        num_empty_boxes = []
         for detection_per_image, targets_per_image in zip(detections, targets):
             if not targets_per_image.has('gt_digit_boxes'):
                 continue
@@ -353,12 +352,10 @@ class BaseROIHeads(StandardROIHeads):
                 # targets_per_image.gt_digit_classes = [torch.empty(0, device=device).long() for _ in range(N)]
             num_bg_samples.append((gt_digit_classes == 0).sum().item())
             num_fg_samples.append(gt_digit_classes.numel() - num_bg_samples[-1])
-            num_empty_boxes.append((~keep).sum().item())
         # Log the number of fg/bg samples that are selected for training ROI heads
         storage = get_event_storage()
-        storage.put_scalar("pg_head/num_empty_boxes", np.mean(num_empty_boxes))
-        storage.put_scalar("pg_head/num_fg_digit_samples", np.mean(num_fg_samples))
-        storage.put_scalar("pg_head/num_bg_digit_samples", np.mean(num_bg_samples))
+        storage.put_scalar("pg_head/num_fg_digit_samples", np.mean(num_fg_samples) if len(num_fg_samples) else 0.)
+        storage.put_scalar("pg_head/num_bg_digit_samples", np.mean(num_bg_samples) if len(num_bg_samples) else 0.)
 
 
 

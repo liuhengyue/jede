@@ -241,9 +241,6 @@ class PGROIHeads(BaseROIHeads):
         instances = self._forward_keypoint(features, instances)
         instances = self._forward_pose_guided(features, instances)
         instances = self._forward_digit_box(features, instances)
-        # remove proposal boxes
-        for instance in instances:
-            instance.remove('proposal_digit_boxes')
 
         return instances
 

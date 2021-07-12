@@ -53,7 +53,7 @@ def create_instances(predictions, image_size):
     ret.pred_digit_classes = labels
 
     # filter low confident person detection
-    ret = ret[ret.scores > args.p_conf_threshold]
+    # ret = ret[ret.scores > args.p_conf_threshold]
 
     # thresholds = np.asarray([args.p_conf_threshold if label == 0 else args.d_conf_threshold for label in labels])
     # chosen = (score > thresholds).nonzero()[0]

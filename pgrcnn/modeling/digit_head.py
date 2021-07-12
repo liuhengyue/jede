@@ -411,6 +411,7 @@ class DigitOutputLayers(nn.Module):
             proposals[i].pred_digit_boxes = detection.pred_digit_boxes
             proposals[i].digit_scores = detection.digit_scores
             proposals[i].pred_digit_classes = detection.pred_digit_classes
+            proposals[i].remove('proposal_digit_boxes')
         return proposals, kept_idx
 
     def predict_boxes_for_gt_classes(self, predictions, proposals):
