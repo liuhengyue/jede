@@ -68,7 +68,7 @@ def paste_image(target_image, img, alpha=0.5):
 def copy_paste_mix_images(dataset_dicts,
                           format=None,
                           max_size=800,
-                          min_scale=1.0,
+                          min_scale=0.2,
                           # max_scale=1.0,
                           interp=Image.BILINEAR
                           ):
@@ -85,7 +85,7 @@ def copy_paste_mix_images(dataset_dicts,
     """
     num_images = len(dataset_dicts)
     target_width = max_size
-    target_height = int(max_size * 9/16)
+    target_height = int(max_size * np.random.uniform(0.5, 1.5))
     target_image = np.zeros((target_height, target_width, 3), dtype=np.uint8)
     target_dataset_dict = {
         "file_name": "synthesis_" + "_".join([str(x["image_id"]) for x in dataset_dicts]),
@@ -97,6 +97,9 @@ def copy_paste_mix_images(dataset_dicts,
     per_image_width = target_width // np.sqrt(num_images)
     output_size = (per_image_height, per_image_width)
     max_scale = np.sqrt(num_images) - 0.1
+    # create a list images of different size
+    imgs = []
+    tfms = []
     for dataset_dict in dataset_dicts:
         img = utils.read_image(dataset_dict["file_name"], format=format)
         utils.check_image_size(dataset_dict, img)
@@ -114,7 +117,16 @@ def copy_paste_mix_images(dataset_dicts,
             input_size[0], input_size[1], scaled_size[0], scaled_size[1], interp
         )
         img = tfm.apply_image(img)
+        imgs.append(img)
+        tfms.append(tfm)
 
+    # sort the images from largest to smallest, so it will not overlap too much
+    img_sizes = [-img.size for img in imgs]
+    sorted_inds = np.argsort(img_sizes)
+    imgs = [imgs[i] for i in sorted_inds]
+    dataset_dicts = [dataset_dicts[i] for i in sorted_inds]
+    tfms = [tfms[i] for i in sorted_inds]
+    for dataset_dict, img, tfm in zip(dataset_dicts, imgs, tfms):
         succeeded, x, y = paste_image(target_image, img)
         if not succeeded:
             continue

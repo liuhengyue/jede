@@ -458,24 +458,14 @@ def convert_to_coco_dict(dataset_name):
                         num_keypoints = annotation["num_keypoints"]
                     else:
                         num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
-                # COCO requirement: instance area
-                if "segmentation" in annotation:
-                    # Computing areas for instances by counting the pixels
-                    segmentation = annotation["segmentation"]
-                    # TODO: check segmentation type: RLE, BinaryMask or Polygon
-                    polygons = PolygonMasks([segmentation])
-                    area = polygons.area()[0].item()
-                else:
-                    # Computing areas using bounding boxes
-                    bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-                    area = Boxes([bbox_xy]).area()[0].item()
+
+                # Computing areas using bounding boxes
+                bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+                area = Boxes([bbox_xy]).area()[0].item()
                 # Add optional fields
                 if "keypoints" in annotation:
                     coco_annotation["keypoints"] = keypoints
                     coco_annotation["num_keypoints"] = num_keypoints
-
-                if "segmentation" in annotation:
-                    coco_annotation["segmentation"] = annotation["segmentation"]
 
                 coco_annotation["id"] = len(coco_annotations) + 1
                 coco_annotation["image_id"] = coco_image["id"]
@@ -494,20 +484,9 @@ def convert_to_coco_dict(dataset_name):
                 # COCO requirement: XYWH box format
                 bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
 
-                # COCO requirement: instance area
-                if "segmentation" in annotation:
-                    # Computing areas for instances by counting the pixels
-                    segmentation = annotation["segmentation"]
-                    # TODO: check segmentation type: RLE, BinaryMask or Polygon
-                    polygons = PolygonMasks([segmentation])
-                    area = polygons.area()[0].item()
-                else:
-                    # Computing areas using bounding boxes
-                    bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-                    area = Boxes([bbox_xy]).area()[0].item()
-
-
-
+                # Computing areas using bounding boxes
+                bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+                area = Boxes([bbox_xy]).area()[0].item()
                 # COCO requirement:
                 #   linking annotations to images
                 #   "id" field must start with 1
@@ -562,9 +541,11 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
     classes = instances.pred_classes.tolist()
     if not digit_only:
         # convert digit related fields
-        digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes if len(digit_boxes) > 0]
+        digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
+        num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
+        digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
         if len(digit_boxes) > 0:
-            digit_boxes = np.concatenate([digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes if len(digit_boxes) > 0])
+            digit_boxes = np.concatenate(digit_boxes)
             digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
             digit_boxes = digit_boxes.tolist()
             digit_scores = [score for digit_scores in instances.digit_scores if len(digit_scores) > 0 \
@@ -583,21 +564,6 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
         num_person_instance = num_instance
         num_instance = num_instance + num_digit_instance
 
-    has_mask = instances.has("pred_masks")
-    if has_mask:
-        # use RLE to encode the masks, because they are too large and takes memory
-        # since this evaluator stores outputs of the entire dataset
-        rles = [
-            mask_util.encode(np.array(mask[:, :, None], order="F", dtype="uint8"))[0]
-            for mask in instances.pred_masks
-        ]
-        for rle in rles:
-            # "counts" is an array encoded by mask_util as a byte-stream. Python3's
-            # json writer which always produces strings cannot serialize a bytestream
-            # unless you decode it. Thankfully, utf-8 works out (which is also what
-            # the pycocotools/_mask.pyx does).
-            rle["counts"] = rle["counts"].decode("utf-8")
-
     has_keypoints = instances.has("pred_keypoints")
     if has_keypoints:
         keypoints = instances.pred_keypoints
@@ -610,8 +576,6 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
             "bbox": boxes[k],
             "score": scores[k],
         }
-        if has_mask:
-            result["segmentation"] = rles[k]
         if has_keypoints and k < num_person_instance:
             # In COCO annotations,
             # keypoints coordinates are pixel indices.
@@ -620,20 +584,11 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
             # This is the inverse of data loading logic in `datasets/coco.py`.
             keypoints[k][:, :2] -= 0.5
             result["keypoints"] = keypoints[k].flatten().tolist()
+        if k >= num_person_instance:
+            # add a field for matching the digit to its person
+            result["match_id"] = digit_box_instance_inds[k-num_person_instance]
         results.append(result)
     return results
-
-class OutputLogger:
-    def __init__(self, name="root", level="INFO"):
-        self.logger = logging.getLogger(name)
-        self.name = self.logger.name
-        self.level = getattr(logging, level)
-
-    def write(self, msg):
-        if msg and not msg.isspace():
-            self.logger.log(self.level, msg)
-
-    def flush(self): pass
 
 
 

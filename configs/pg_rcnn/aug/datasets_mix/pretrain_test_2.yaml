@@ -16,4 +16,4 @@ SOLVER:
   BASE_LR: 0.0002 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (80000,)
   MAX_ITER: 100000
-OUTPUT_DIR: ./output/pg_rcnn/aug/datasets_mix/pretrain_test_2
+OUTPUT_DIR: ./output/pg_rcnn/aug/datasets_mix/pretrain_test_2_new

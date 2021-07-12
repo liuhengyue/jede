@@ -2,7 +2,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
 import json
-import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import gridspec
+import torch
 import os
 from collections import defaultdict
 import cv2
@@ -10,7 +12,7 @@ import tqdm
 from fvcore.common.file_io import PathManager
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
-from detectron2.structures import BoxMode
+from detectron2.structures import BoxMode, Keypoints
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from pgrcnn.utils.launch_utils import setup
 from pgrcnn.structures import Players, Boxes
@@ -18,22 +20,48 @@ from pgrcnn.structures import Players, Boxes
 
 def create_instances(predictions, image_size):
     ret = Players(image_size)
-
-    score = np.asarray([x["score"] for x in predictions])
-    labels = [dataset_id_map(p["category_id"]) for p in predictions]
-    thresholds = np.asarray([args.p_conf_threshold if label == 0 else args.d_conf_threshold for label in labels])
-    chosen = (score > thresholds).nonzero()[0]
-    score = score[chosen]
-    bbox = np.asarray([predictions[i]["bbox"] for i in chosen])
-    bbox = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS) if bbox.size > 0 else bbox
-
-    labels = np.asarray([labels[i] for i in chosen])
-    keypoints = np.asarray([x["keypoints"] for x in predictions if "keypoints" in x]).reshape((-1, 17, 3))
-    # todo - customize for jersey number data
-    ret.scores = score
-    ret.pred_boxes = Boxes(bbox)
+    # add fields
+    # labels = [dataset_id_map(p["category_id"]) for p in predictions]
+    person_predictions = [p for p in predictions if p["category_id"] == 0]
+    digit_predictions = [p for p in predictions if p["category_id"] > 0]
+    # process person
+    boxes = BoxMode.convert(torch.as_tensor([p["bbox"] for p in person_predictions]), BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    scores = torch.as_tensor([p["score"] for p in person_predictions])
+    keypoints = torch.as_tensor([p["keypoints"] for p in person_predictions]).view(-1, 17, 3)
+    labels = torch.as_tensor([p["category_id"] for p in person_predictions], dtype=torch.long)
+    ret.scores = scores
+    ret.pred_boxes = Boxes(boxes)
     ret.pred_classes = labels
-    # ret.pred_keypoints = keypoints
+    ret.pred_keypoints = Keypoints(keypoints)
+    # process digit predictions
+    num_instances = len(ret)
+    boxes = [[] for _ in range(num_instances)]
+    labels = [[] for _ in range(num_instances)]
+    scores = [[] for _ in range(num_instances)]
+    for p in digit_predictions:
+        bbox = BoxMode.convert(torch.as_tensor([p["bbox"]]), BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+        score = torch.as_tensor([p["score"]])
+        label = torch.as_tensor([p["category_id"]], dtype=torch.long)
+        boxes[p["match_id"]].append(Boxes(bbox))
+        labels[p["match_id"]].append(label)
+        scores[p["match_id"]].append(score)
+    boxes = [Boxes.cat(bboxes_list) if len(bboxes_list) else Boxes(torch.empty((0, 4), dtype=torch.float32)) for bboxes_list in boxes]
+    labels = [torch.cat(labels_list) if len(labels_list) else torch.empty((0,), dtype=torch.long) for labels_list in labels]
+    scores = [torch.cat(scores_list) if len(scores_list) else torch.empty((0,), dtype=torch.float32) for scores_list in scores]
+    ret.digit_scores = scores
+    ret.pred_digit_boxes = boxes
+    ret.pred_digit_classes = labels
+
+    # filter low confident person detection
+    ret = ret[ret.scores > args.p_conf_threshold]
+
+    # thresholds = np.asarray([args.p_conf_threshold if label == 0 else args.d_conf_threshold for label in labels])
+    # chosen = (score > thresholds).nonzero()[0]
+    # score = score[chosen]
+    # bbox = np.asarray([predictions[i]["bbox"] for i in chosen])
+    # bbox = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS) if bbox.size > 0 else bbox
+    # labels = np.asarray([labels[i] for i in chosen])
+
 
     return ret
 
@@ -46,7 +74,7 @@ if __name__ == "__main__":
     # parser.add_argument("--output", required=True, help="output directory")
     parser.add_argument("--config-file", help="config file path", default="configs/pg_rcnn/pg_rcnn_test.yaml")
     parser.add_argument("--dataset", help="name of the dataset", default="jerseynumbers_val")
-    parser.add_argument("--p-conf-threshold", default=0.5, type=float, help="person confidence threshold")
+    parser.add_argument("--p-conf-threshold", default=0.9, type=float, help="person confidence threshold")
     parser.add_argument("--d-conf-threshold", default=0.5, type=float, help="digit confidence threshold")
     args = parser.parse_args()
     # lazy add config file
@@ -89,13 +117,18 @@ if __name__ == "__main__":
     for dic in tqdm.tqdm(dicts):
         img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
         basename = os.path.basename(dic["file_name"])
+        basename_wo_extension = os.path.splitext(basename)[0]
 
         predictions = create_instances(pred_by_image[dic["image_id"]], img.shape[:2])
-        vis = JerseyNumberVisualizer(img, metadata)
-        vis_pred = vis.draw_instance_predictions(predictions).get_image()
+        # vis_pred = JerseyNumberVisualizer(img, metadata, montage=False)
+        # vis_pred.draw_instance_predictions(predictions)
+        # vis_pred.get_output().save(os.path.join(args.output, "{}_pred.pdf".format(basename_wo_extension)))
 
-        vis = JerseyNumberVisualizer(img, metadata)
-        vis_gt = vis.draw_dataset_dict(dic).get_image()
+        # vis_gt = JerseyNumberVisualizer(img, metadata, montage=False)
+        # vis_gt.draw_dataset_dict(dic)
+        # vis_gt.get_output().save(os.path.join(args.output, "{}_gt.pdf".format(basename_wo_extension)))
 
-        concat = np.concatenate((vis_pred, vis_gt), axis=1)
-        cv2.imwrite(os.path.join(args.output, basename), concat[:, :, ::-1])
+        vis = JerseyNumberVisualizer(img, metadata, montage=True, nrows=1, ncols=2)
+        vis.draw_montage(predictions, dic)
+        vis.get_output().save(os.path.join(args.output, "{}_montage.pdf".format(basename_wo_extension)))
+

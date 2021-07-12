@@ -167,10 +167,16 @@ def fast_rcnn_inference_single_image(
     pred_digit_classes = torch.split(filter_inds[:, 1] + 1, counts)
     result = Players(image_shape)
     # these fields should have length num_instance
-    # instance_idx[0]
-    result.pred_digit_boxes = [Boxes(x) for x in boxes]
-    result.digit_scores = list(scores)
-    result.pred_digit_classes = list(pred_digit_classes)
+    boxes = [Boxes(x) for x in boxes]
+    xs = [x.get_centers()[:, 0] for x in boxes]
+    # sort the digit box location left -> right
+    sorted_inds = [torch.sort(x)[1] for x in xs]
+    boxes = [bbox[inds] for bbox, inds in zip(boxes, sorted_inds)]
+    scores = [score[inds] for score, inds in zip(scores, sorted_inds)]
+    pred_digit_classes = [pred_digit_cls[inds] for pred_digit_cls, inds in zip(pred_digit_classes, sorted_inds)]
+    result.pred_digit_boxes = boxes
+    result.digit_scores = scores
+    result.pred_digit_classes = pred_digit_classes
     return result, filter_inds[:, 0]
 
 

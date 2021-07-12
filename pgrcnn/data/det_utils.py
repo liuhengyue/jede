@@ -38,7 +38,8 @@ def pad_full_keypoints(kpts, keypoints_inds=[5, 6, 12, 11], num_keypoints=17):
     Returns:
 
     """
-
+    if kpts.size == num_keypoints * 3:
+        return kpts.reshape(-1, num_keypoints, 3)
     kpts = kpts.reshape(-1, 4, 3)
     assert kpts.shape[1:] == (4, 3), "wrong shape of kpts: {}, only takes shape of (1, 4, 3) ".format(kpts.shape)
     full_keypoints = np.zeros((kpts.shape[0], num_keypoints, 3), dtype=np.float32)
