@@ -180,11 +180,9 @@ class JerseyNumberEvaluator(COCOEvaluator):
                 "keypoints! For more information please refer to "
                 "http://cocodataset.org/#keypoints-eval.".format(num_keypoints)
             )
-        # direct print output to the logger
-        with contextlib.redirect_stdout(io.StringIO()):
-            coco_eval.evaluate()
-            coco_eval.accumulate()
-            coco_eval.summarize()
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
 
         return coco_eval
 

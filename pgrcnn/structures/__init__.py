@@ -1,5 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from .boxes import Boxes
+from .boxes import Boxes, inside_matched_box
 from .players import Players
 
 __all__ = [k for k in globals().keys() if not k.startswith("_")]

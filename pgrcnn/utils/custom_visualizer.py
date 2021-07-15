@@ -120,6 +120,7 @@ class MontageImage:
                 the visualized image will be saved.
         """
         self.fig.savefig(filepath)
+        plt.close(self.fig)
 
     def get_image(self):
         """

@@ -14,7 +14,7 @@ from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY
 from pgrcnn.modeling.kpts2digit_head import build_digit_head
 from pgrcnn.modeling.utils.decode_utils import ctdet_decode
 from pgrcnn.modeling.digit_head import DigitOutputLayers
-from pgrcnn.structures import Boxes, Players
+from pgrcnn.structures import Boxes, Players, inside_matched_box
 from pgrcnn.modeling.roi_heads import BaseROIHeads
 from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from pgrcnn.modeling.utils import compute_targets
@@ -165,7 +165,6 @@ class PGROIHeads(BaseROIHeads):
                                           reg=offset_heatmaps,
                                           K=self.num_ctdet_proposal,
                                           feature_scale="feature")
-                # todo: has duplicate boxes
                 len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                 detections = list(detections.split(len_instances))
                 # assign new fields to instances
@@ -185,8 +184,11 @@ class PGROIHeads(BaseROIHeads):
             detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
             # assign new fields to instances
             for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
-                # could be empty list
-                instances[i].proposal_digit_boxes = [Boxes(b) for b in boxes]
+                # perform a person roi clip
+                boxes = [Boxes(b) for b in boxes] # List of N `Boxes'
+                pred_person_boxes = instances[i].pred_boxes # [N, 4]
+                boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[i])] for i, boxes_per_ins in enumerate(boxes)]
+                instances[i].proposal_digit_boxes = boxes
                 # instances[i].proposal_digit_ct_classes = [c for c in detection_ct_cls]
             return instances
 

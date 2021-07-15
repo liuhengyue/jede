@@ -42,3 +42,22 @@ class Boxes(detectron_boxes):
         b = self.tensor[item]
         assert b.dim() == 2, "Indexing on Boxes with {} failed to return a matrix!".format(item)
         return Boxes(b)
+
+def inside_matched_box(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
+    """
+    Compute if boxes1 are in boxes2. The box order must be (xmin, ymin, xmax, ymax).
+    Somehow similar to 'pairwise_ioa'.
+
+    Args:
+        boxes1: (Boxes) bounding boxes, sized [N,4].
+        boxes2: (Boxes) bounding boxes, sized [1,4].
+    Returns:
+        Tensor: inds_inside, sized [N].
+    """
+    box1, box2 = boxes1.tensor, boxes2.tensor
+    inds_inside = (box1[..., 0] >= box2[..., 0]) \
+                & (box1[..., 1] >= box2[..., 1]) \
+                & (box1[..., 2] < box2[..., 2]) \
+                & (box1[..., 3] < box2[..., 3])
+
+    return inds_inside # [N]

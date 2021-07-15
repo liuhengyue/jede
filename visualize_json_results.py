@@ -74,7 +74,7 @@ if __name__ == "__main__":
     # parser.add_argument("--output", required=True, help="output directory")
     parser.add_argument("--config-file", help="config file path", default="configs/pg_rcnn/pg_rcnn_test.yaml")
     parser.add_argument("--dataset", help="name of the dataset", default="jerseynumbers_val")
-    parser.add_argument("--p-conf-threshold", default=0.9, type=float, help="person confidence threshold")
+    parser.add_argument("--p-conf-threshold", default=0.5, type=float, help="person confidence threshold")
     parser.add_argument("--d-conf-threshold", default=0.5, type=float, help="digit confidence threshold")
     args = parser.parse_args()
     # lazy add config file

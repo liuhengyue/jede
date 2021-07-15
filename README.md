@@ -2,6 +2,16 @@
 
 ## Installation
 
+### Pytorch
+
+Tested on PyTorch 1.8.1.
+
+```
+conda install pytorch==1.8.0 torchvision==0.9.0 torchaudio==0.8.0 cudatoolkit=10.2 -c pytorch
+```
+
+### Detectron2
+
 See [installation instructions](https://detectron2.readthedocs.io/tutorials/install.html) for installing detectron2.
 
 

@@ -131,8 +131,8 @@ class Players(Instances):
                 values = list(itertools.chain(*values))
             elif hasattr(type(v0), "cat"):
                 values = type(v0).cat(values)
-            elif type(v0).__name__ == "Keypoints":
-                values = type(v0)(torch.cat([v.tensor for v in values], dim=0))
+            # elif type(v0).__name__ == "Keypoints":
+            #     values = type(v0)(torch.cat([v.tensor for v in values], dim=0))
             else:
                 raise ValueError("Unsupported type {} for concatenation".format(type(v0)))
             ret.set(k, values)

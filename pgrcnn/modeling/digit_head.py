@@ -143,30 +143,33 @@ def fast_rcnn_inference_single_image(
     # Second column contains indices of classes in terms of 0 - 9 class id.
     filter_inds = filter_mask.nonzero()
     # find the indices of each digit bbox in each person instance
-    if num_instance:
-        instance_idx = filter_mask.view(num_instance, -1, num_bbox_reg_classes).nonzero()[:, 0]
-    else:
-        instance_idx = torch.zeros(0, device=filter_mask.device, dtype=torch.long)
+    instance_idx = torch.as_tensor([x for i, num_digits in enumerate(num_instance) for x in [i] * num_digits], dtype=torch.long, device=scores.device)
+    # if num_instance:
+    #     instance_idx = filter_mask.view(num_instance, -1, num_bbox_reg_classes).nonzero()[:, 0]
+    # else:
+    #     instance_idx = torch.zeros(0, device=filter_mask.device, dtype=torch.long)
     if num_bbox_reg_classes == 1:
         boxes = boxes[filter_inds[:, 0], 0]
     else:
         boxes = boxes[filter_mask]
     scores = scores[filter_mask]
-
+    instance_idx = instance_idx[filter_inds[:, 0]]
     # Apply per-class NMS
     keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
-    boxes, scores, filter_inds = boxes[keep], scores[keep], filter_inds[keep]
+    # recover digit class ids by adding one
+    boxes, scores, pred_digit_classes = boxes[keep], scores[keep], filter_inds[keep][:, 1] + 1
     instance_idx = instance_idx[keep]
+    instance_idx, sorted_inds = torch.sort(instance_idx)
+    boxes, scores, pred_digit_classes = boxes[sorted_inds], scores[sorted_inds], pred_digit_classes[sorted_inds]
     # count number of digit object for each instance
-    counts = torch.bincount(instance_idx, minlength=num_instance).tolist()
+    counts = torch.bincount(instance_idx, minlength=len(num_instance)).tolist()
     boxes = torch.split(boxes, counts)
     scores = torch.split(scores, counts)
-    # recover digit class ids by adding one
-    pred_digit_classes = torch.split(filter_inds[:, 1] + 1, counts)
+    pred_digit_classes = torch.split(pred_digit_classes, counts)
     result = Players(image_shape)
-    # these fields should have length num_instance
+
     boxes = [Boxes(x) for x in boxes]
     xs = [x.get_centers()[:, 0] for x in boxes]
     # sort the digit box location left -> right
@@ -174,6 +177,7 @@ def fast_rcnn_inference_single_image(
     boxes = [bbox[inds] for bbox, inds in zip(boxes, sorted_inds)]
     scores = [score[inds] for score, inds in zip(scores, sorted_inds)]
     pred_digit_classes = [pred_digit_cls[inds] for pred_digit_cls, inds in zip(pred_digit_classes, sorted_inds)]
+    # these fields should have length len(num_instance)
     result.pred_digit_boxes = boxes
     result.digit_scores = scores
     result.pred_digit_classes = pred_digit_classes
@@ -396,7 +400,7 @@ class DigitOutputLayers(nn.Module):
         boxes = self.predict_boxes(predictions, proposals)
         scores = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
-        num_instances = [len(p) for p in proposals]
+        num_instances = [[len(p_digit_boxes) for p_digit_boxes in p.get("proposal_digit_boxes")] for p in proposals]
         detections, kept_idx = fast_rcnn_inference(
             boxes,
             scores,
@@ -459,14 +463,14 @@ class DigitOutputLayers(nn.Module):
         # flat all boxes
         proposal_boxes = Boxes.cat([b for p in proposals for b in p.proposal_digit_boxes]).tensor.to(proposal_deltas.device)
         # num of digit boxes per image
-        num_prop_per_image = [self.num_digit_proposals * len(p) for p in proposals]
+        num_prop_per_image = [sum([len(p_digit_boxes) for p_digit_boxes in p.get("proposal_digit_boxes")]) for p in proposals]
         # proposal_boxes = proposal_boxes[0].cat(proposal_boxes).tensor
         predict_boxes = self.box2box_transform.apply_deltas(
             # ensure fp32 for decoding precision
             proposal_deltas,
             proposal_boxes,
         )  # Nx(KxB)
-        return predict_boxes.split(num_prop_per_image)
+        return predict_boxes.split(num_prop_per_image, dim=0)
 
     def predict_probs(
             self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Players]
@@ -478,9 +482,9 @@ class DigitOutputLayers(nn.Module):
                 for image i.
         """
         scores, _ = predictions
-        num_inst_per_image = [self.num_digit_proposals * len(p) for p in proposals]
+        num_prop_per_image = [sum([len(p_digit_boxes) for p_digit_boxes in p.get("proposal_digit_boxes")]) for p in proposals]
         probs = F.softmax(scores, dim=-1)
-        return probs.split(num_inst_per_image, dim=0)
+        return probs.split(num_prop_per_image, dim=0)
 
 def paired_iou(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
     """

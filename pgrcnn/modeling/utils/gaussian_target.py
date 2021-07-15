@@ -79,7 +79,8 @@ def compute_targets(
         x = x[valid_loc]
         # digit box size in feature size (w, h)
         scale = scale[valid_loc] * torch.stack((dw, dh))[None, ...]
-        radius = gaussian_radius(scale, min_overlap=0.3)
+        radius = gaussian_radius(scale, min_overlap=0.3).int()
+        radius = torch.maximum(torch.zeros_like(radius), radius)
         gen_gaussian_target(heatmaps[i],
                             [x, y],
                             radius)
@@ -165,15 +166,15 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
                          x[i] - left[i]:x[i] + right[i]]
         masked_gaussian = gaussian_kernel[radius[i, 1] - top[i]:radius[i, 1] + bottom[i],
                                           radius[i, 0] - left[i]:radius[i, 0] + right[i]]
-        out_heatmap = heatmap
+        # out_heatmap = heatmap
         torch.max(
             masked_heatmap,
             masked_gaussian * k,
-            out=out_heatmap[:,
+            out=heatmap[:,
                          y[i] - top[i]:y[i] + bottom[i],
                          x[i] - left[i]:x[i] + right[i]])
 
-    return out_heatmap
+    return heatmap
 
 
 def gaussian_radius(det_size, min_overlap=0.1):
@@ -189,7 +190,6 @@ def gaussian_radius(det_size, min_overlap=0.1):
     """
     factor = (1 - sqrt(min_overlap)) / sqrt(2)  # > 0
     radius_a_b = det_size * factor + 1
-    return radius_a_b.int()
-
+    return radius_a_b
 
 
