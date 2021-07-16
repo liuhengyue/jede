@@ -112,7 +112,8 @@ def fast_rcnn_inference(boxes, scores, num_instances, image_shapes, score_thresh
 
 
 def fast_rcnn_inference_single_image(
-    boxes, scores, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image
+    boxes, scores, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
+    per_class_nms=True
 ):
     """
     Single-image inference. Return bounding-box detection results by thresholding
@@ -155,7 +156,8 @@ def fast_rcnn_inference_single_image(
     scores = scores[filter_mask]
     instance_idx = instance_idx[filter_inds[:, 0]]
     # Apply per-class NMS
-    keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
+    cls_ids = filter_inds[:, 1] if per_class_nms else torch.zeros_like(filter_inds[:, 1])
+    keep = batched_nms(boxes, scores, cls_ids, nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
     # recover digit class ids by adding one
@@ -205,8 +207,6 @@ class DigitOutputLayers(nn.Module):
             smooth_l1_beta: float = 0.0,
             box_reg_loss_type: str = "smooth_l1",
             loss_weight: Union[float, Dict[str, float]] = 1.0,
-            num_interests: int = 3,
-            num_digit_proposals: int = 10
     ):
         """
         NOTE: this interface is experimental.
@@ -254,8 +254,6 @@ class DigitOutputLayers(nn.Module):
         self.loss_weight = loss_weight
         # we set the bg class as the first class, so the digit id is consistent
         self.bg_class_ind = 0
-        self.num_interests = num_interests
-        self.num_digit_proposals = num_digit_proposals
 
     @classmethod
     def from_config(cls, cfg, input_shape):
@@ -271,8 +269,6 @@ class DigitOutputLayers(nn.Module):
             "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
             "box_reg_loss_type": cfg.MODEL.ROI_DIGIT_HEAD.BBOX_REG_LOSS_TYPE,
             "loss_weight": {"loss_box_reg": cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_WEIGHT},
-            "num_interests": cfg.DATASETS.NUM_INTERESTS,
-            "num_digit_proposals": cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL
             # fmt: on
         }
 

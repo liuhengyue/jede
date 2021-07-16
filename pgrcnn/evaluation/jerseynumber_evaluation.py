@@ -561,30 +561,40 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
     boxes = boxes.tolist()
     scores = instances.scores.tolist()
     classes = instances.pred_classes.tolist()
-    if not digit_only:
-        # convert digit related fields
-        digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
-        num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
-        digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
-        if len(digit_boxes) > 0:
-            digit_boxes = np.concatenate(digit_boxes)
-            digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
-            digit_boxes = digit_boxes.tolist()
-            digit_scores = [score for digit_scores in instances.digit_scores if len(digit_scores) > 0 \
-                            for score in digit_scores.tolist()]
-            digit_classes = [cls for digit_classes in instances.pred_digit_classes if len(digit_classes) > 0 \
-                             for cls in digit_classes.tolist()]
-        else:
-            digit_scores, digit_classes = [], []
-        # todo: append the results for now
-        num_digit_instance = len(digit_boxes)
-        boxes = boxes + digit_boxes
-        scores = scores + digit_scores
-        classes = classes + digit_classes
-        assert len(boxes) == len(scores) == len(classes)
-        # todo: we have override the variable 'num_instance" here!
-        num_person_instance = num_instance
-        num_instance = num_instance + num_digit_instance
+    if digit_only:
+        results = []
+        for k in range(num_instance):
+            result = {
+                "image_id": img_id,
+                "category_id": classes[k],
+                "bbox": boxes[k],
+                "score": scores[k],
+            }
+            results.append(result)
+        return  results
+
+    # convert digit related fields
+    digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
+    num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
+    digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
+    if len(digit_boxes) > 0:
+        digit_boxes = np.concatenate(digit_boxes)
+        digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
+        digit_boxes = digit_boxes.tolist()
+        digit_scores = [score for digit_scores in instances.digit_scores if len(digit_scores) > 0 \
+                        for score in digit_scores.tolist()]
+        digit_classes = [cls for digit_classes in instances.pred_digit_classes if len(digit_classes) > 0 \
+                         for cls in digit_classes.tolist()]
+    else:
+        digit_scores, digit_classes = [], []
+
+    num_digit_instance = len(digit_boxes)
+    boxes = boxes + digit_boxes
+    scores = scores + digit_scores
+    classes = classes + digit_classes
+    assert len(boxes) == len(scores) == len(classes)
+    num_person_instance = num_instance
+    num_instance = num_instance + num_digit_instance
 
     has_keypoints = instances.has("pred_keypoints")
     if has_keypoints:

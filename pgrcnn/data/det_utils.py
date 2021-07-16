@@ -132,8 +132,7 @@ def transform_instance_annotations(
 
 def annotations_to_instances(annos,
                              image_size,
-                             digit_only=False,
-                             num_keypoints=17
+                             digit_only=False
                              ):
     """
     Create an :class:`Instances` object used by the models,
@@ -166,14 +165,15 @@ def annotations_to_instances(annos,
     if digit_only:
         target = Instances(image_size)
         boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
+        boxes = np.concatenate(boxes, axis=0)
         # remove padded boxes
-        boxes = np.concatenate([box[np.any(box > 0, axis=1)] for box in boxes])
-        boxes = target.gt_boxes = Boxes(boxes)
+        boxes = Boxes(boxes)
         boxes.clip(image_size)
-        classes = np.concatenate([obj["digit_ids"][np.where(obj["digit_ids"] > -1)] for obj in annos])
-        # ids are solved by cfg in datatset
-        classes = torch.tensor(classes, dtype=torch.int64).view(-1)
-        target.gt_classes = classes
+        # we may have empty after cropping
+        keep = boxes.nonempty()
+        target.gt_boxes = boxes[keep]
+        classes = torch.as_tensor([digit_cls for obj in annos for digit_cls in obj["digit_ids"]], dtype=torch.int64)
+        target.gt_classes = classes[keep]
         return target
 
     target = Players(image_size)

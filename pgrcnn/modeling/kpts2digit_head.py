@@ -18,7 +18,6 @@ class Kpts2DigitHead(nn.Module):
     @configurable
     def __init__(self,
                  transform_dim: int,
-                 num_proposal: int,
                  input_shapes: Dict[str, ShapeSpec],
                  *,
                  conv_dims: List[int],
@@ -52,7 +51,6 @@ class Kpts2DigitHead(nn.Module):
         # final detection heads
         self.ct_head = []
         self.size_head = []
-        self.num_proposal = num_proposal
         self.transform_dim = transform_dim
         self.use_person_box_features = use_person_box_features
         self.offset_reg = offset_reg
@@ -314,7 +312,6 @@ class Kpts2DigitHead(nn.Module):
             "conv_dims": [conv_dim] * num_conv,
             "fc_dims": [fc_dim] * num_fc,
             "conv_norm": cfg.MODEL.ROI_DIGIT_HEAD.NORM,
-            "num_proposal": cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL,
             "use_deform": cfg.MODEL.ROI_DIGIT_HEAD.DEFORMABLE,
             "use_person_box_features": cfg.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES,
             "num_interests": cfg.DATASETS.NUM_INTERESTS,

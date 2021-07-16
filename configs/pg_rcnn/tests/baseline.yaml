@@ -1,0 +1,23 @@
+_BASE_: "../pg_rcnn_base.yaml"
+DATASETS:
+  NUM_IMAGES: 1 # change the number of images to load
+  TRAIN_VIDEO_IDS: [1]
+  TEST_VIDEO_IDS: [1]
+INPUT:
+  MIN_SIZE_TRAIN: (256,)
+  MAX_SIZE_TRAIN: 320
+  MAX_SIZE_TEST: 320
+  AUG:
+    COPY_PASTE_MIX: 0
+SOLVER:
+  IMS_PER_BATCH: 1
+  BASE_LR: 0.0001 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (1500, )
+  MAX_ITER: 2000
+  WARMUP_FACTOR: 0.002
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 500
+DATALOADER:
+  SHUFFLE: False
+  NUM_WORKERS: 2
+OUTPUT_DIR: ./output/pg_rcnn/tests/baseline

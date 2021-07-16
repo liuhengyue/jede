@@ -190,7 +190,7 @@ class BaseROIHeads(StandardROIHeads):
                 for (trg_name, trg_value) in targets_per_image.get_fields().items():
                     if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
                         if isinstance(trg_value, list):
-                            proposals_per_image.set(trg_name, [trg_value[i] for i in sampled_targets])
+                            proposals_per_image.set(trg_name, [trg_value[i] for i in sampled_targets.tolist()])
                         else:
                             proposals_per_image.set(trg_name, trg_value[sampled_targets])
                 num_bg_samples.append((gt_classes == self.num_classes).sum().item())

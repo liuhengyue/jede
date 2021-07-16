@@ -33,7 +33,8 @@ class PGROIHeads(BaseROIHeads):
         super(PGROIHeads, self).__init__(cfg, input_shape)
         self.num_digit_classes = cfg.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES
         self.use_person_box_features = cfg.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES
-        self.num_ctdet_proposal = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL
+        self.num_proposal_train = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL_TRAIN
+        self.num_proposal_test = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL_TEST
         self.num_interests = cfg.DATASETS.NUM_INTERESTS
         self.batch_digit_size_per_image = cfg.MODEL.ROI_DIGIT_HEAD.BATCH_DIGIT_SIZE_PER_IMAGE
         self._init_digit_head(cfg, input_shape)
@@ -163,7 +164,7 @@ class PGROIHeads(BaseROIHeads):
                 # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                           reg=offset_heatmaps,
-                                          K=self.num_ctdet_proposal,
+                                          K=self.num_proposal_train,
                                           feature_scale="feature")
                 len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                 detections = list(detections.split(len_instances))
@@ -177,7 +178,7 @@ class PGROIHeads(BaseROIHeads):
             # (N, num of candidates, (x1, y1, x2, y2, score, center 0 /left 1/right 2)
             detection = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                      reg=offset_heatmaps,
-                                     K=self.num_ctdet_proposal,
+                                     K=self.num_proposal_test,
                                      feature_scale="feature",
                                      training=False)
             detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))

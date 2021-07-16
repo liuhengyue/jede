@@ -2,17 +2,28 @@
 
 ## Installation
 
-### Pytorch
+### Dependencies
 
 Tested on PyTorch 1.8.1.
 
 ```
 conda install pytorch==1.8.0 torchvision==0.9.0 torchaudio==0.8.0 cudatoolkit=10.2 -c pytorch
+pip install opencv-python
 ```
 
-### Detectron2
 
-See [installation instructions](https://detectron2.readthedocs.io/tutorials/install.html) for installing detectron2.
+
+### Our code base and Detectron2
+
+```
+git clone https://github.com/liuhengyue/pgrcnn.git
+cd pgrcnn
+git submodule init
+git submodule update
+python -m pip install -e detectron2
+```
+
+See [installation instructions](https://detectron2.readthedocs.io/tutorials/install.html) for more details on installing detectron2.
 
 
 ## Dataset Preparation
@@ -20,7 +31,7 @@ See [installation instructions](https://detectron2.readthedocs.io/tutorials/inst
 ### Prepare Jersey Number
 
 ```
-# to be added
+mkdir datasets/jnw
 ```
 
 ### Prepare COCO (Optional)

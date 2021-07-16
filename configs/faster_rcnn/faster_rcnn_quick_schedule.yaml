@@ -1,0 +1,18 @@
+_BASE_: "faster_rcnn_base.yaml"
+DATASETS:
+  NUM_IMAGES: 1 # change the number of images to load
+  TRAIN_VIDEO_IDS: [ 1 ]
+  TEST_VIDEO_IDS: [ 1 ]
+INPUT:
+  CROP:
+    ENABLED: True
+    SIZE: [ 0.1, 0.5 ]
+SOLVER:
+  IMS_PER_BATCH: 1
+  BASE_LR: 0.0001 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (1500, )
+  MAX_ITER: 2000
+  WARMUP_FACTOR: 0.002
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 500
+OUTPUT_DIR: ./output/faster_rcnn/quick_schedule

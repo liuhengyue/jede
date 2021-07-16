@@ -44,22 +44,19 @@ def test_base_dataloader(cfg, show_data=False):
     for data in dataloader:
         try:
             logger.info(f"{data[0]['file_name']}")
+            logger.info(f"{data[0]['instances']}")
             if show_data:
                 file_name, vis_img = visualize_training(data, cfg)
                 cv2.imshow(file_name, vis_img)
-                k = cv2.waitKey(0)
+                cv2.waitKey(0)
                 cv2.destroyAllWindows()
-                if k == 27:
-                    break
         except:
             raise Exception(f"Error when processing {data[0]['file_name']}")
 
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
-    # lazy add config file
-    args.config_file = "configs/pg_rcnn/pg_rcnn_test_coco.yaml"
-    # args.config_file = "configs/pg_rcnn/pg_rcnn_test.yaml"
-    # args.config_file = "../../configs/faster_rcnn_R_50_FPN_3x.yaml"
+    # lazy add config file if you want
+    # args.config_file = "configs/pg_rcnn/pg_rcnn_test_coco.yaml"
     cfg = setup(args)
     test_base_dataloader(cfg, show_data=True)

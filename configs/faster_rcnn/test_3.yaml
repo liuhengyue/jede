@@ -1,0 +1,5 @@
+_BASE_: "faster_rcnn_base.yaml"
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,0]
+  TEST_VIDEO_IDS: [3]
+OUTPUT_DIR: ./output/faster_rcnn/test_3
