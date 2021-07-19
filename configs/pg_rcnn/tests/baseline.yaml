@@ -1,4 +1,12 @@
 _BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  ROI_DIGIT_NECK:
+    NORM: "GN"
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: "GN"
+    KEYPOINTS_BRANCH:
+      NAME: "KptsAttentionBranch"
+      UP_SCALE: 2
 DATASETS:
   NUM_IMAGES: 1 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]

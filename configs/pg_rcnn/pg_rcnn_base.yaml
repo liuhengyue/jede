@@ -14,8 +14,7 @@ MODEL:
     NAME: DigitNeck
     NUM_DIGIT_CLASSES: 10
     DEFORMABLE: False
-    TRANSFORM_DIM: 9
-    NUM_CONV: 5
+    NUM_CONV: 4
     CONV_DIM: 64
     NORM: ""
 DATASETS:

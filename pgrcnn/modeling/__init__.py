@@ -6,6 +6,7 @@ from .pg_head import (
 )
 from .keypoint_head import KPGRCNNHead
 
+from .digit_neck import build_digit_neck
 from .digit_neck_branches import build_digit_neck_branch
 from .meta_arch import (
     META_ARCH_REGISTRY,

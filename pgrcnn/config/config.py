@@ -1,17 +1,21 @@
 from detectron2.config import CfgNode as CN
-# def get_cfg() -> CfgNode:
-#     """
-#     Get a copy of the default config.
-#     Then add extra fields.
-#
-#     We
-#
-#     Returns:
-#         a detectron2 CfgNode instance.
-#     """
-#     add_poseguide_config(_C)
-#
-#     return _C.clone()
+from detectron2.config.defaults import _C
+
+__all__ = ["get_cfg", "add_poseguide_config", "add_tridentnet_config"]
+
+def get_cfg() -> CN:
+    """
+    Get a copy of the default config.
+    Then add extra fields.
+
+    We
+
+    Returns:
+        a detectron2 CfgNode instance.
+    """
+    add_poseguide_config(_C)
+
+    return _C.clone()
 
 def add_tridentnet_config(cfg):
     """
@@ -75,12 +79,11 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_NECK.BBOX_REG_LOSS_TYPE = "smooth_l1"
     _C.MODEL.ROI_DIGIT_NECK.NUM_DIGIT_CLASSES = 10
     _C.MODEL.ROI_DIGIT_NECK.DEFORMABLE = False
-    _C.MODEL.ROI_DIGIT_NECK.TRANSFORM_DIM = 9 # legacy
     _C.MODEL.ROI_DIGIT_NECK.BATCH_DIGIT_SIZE_PER_IMAGE = 256 # number of digit rois to train per image
     # these two are the number of digit proposals per person roi
     _C.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN = 20
     _C.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST = 5
-    _C.MODEL.ROI_DIGIT_NECK.NUM_CONV = 5
+    _C.MODEL.ROI_DIGIT_NECK.NUM_CONV = 4
     _C.MODEL.ROI_DIGIT_NECK.CONV_DIM = 64
     _C.MODEL.ROI_DIGIT_NECK.NORM = ""
     _C.MODEL.ROI_DIGIT_NECK.FOCAL_BIAS = -2.19 # −log((1−pi)/pi), pi=0.1 -> -2.19
@@ -103,6 +106,12 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.UP_SCALE = 1
     _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.CONV_SPECS = (3, 1, 1) # kernel_size, stride, padding
     _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.CONV_DIMS = [64, 64]
+
+    # attention based
+    # _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.NAME = "KptsAttentionBranch"
+    # _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.UP_SCALE = 2
+    # _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.CONV_SPECS = (3, 1, 1)  # kernel_size, stride, padding
+    # _C.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH.CONV_DIMS = [64, 64]
 
     # input
     _C.INPUT.RANDOM_FLIP = "none" # we do not flip since it does not make sense to flip a digit

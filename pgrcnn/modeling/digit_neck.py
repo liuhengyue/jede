@@ -61,41 +61,64 @@ class DigitNeck(nn.Module):
         module = build_digit_neck_branch(cfg_roi_digit_neck_branches.KEYPOINTS_BRANCH.NAME, cfg, input_shapes["keypoint_heatmap_shape"])
         if module:
             self.add_module("kpts_branch", module)
-
+        self.use_person_features = hasattr(self, "person_branch")
+        self.use_kpts_features = hasattr(self, "kpts_branch")
         self.fusion_type = cfg_roi_digit_neck.FUSION_TYPE
+
         if self.fusion_type == "cat":
-            assert self.kpts_branch.output_shape.height == self.person_branch.output_shape.height
-            assert self.kpts_branch.output_shape.width == self.person_branch.output_shape.width
-            in_channels = self.kpts_branch.output_shape.channels + self.person_branch.output_shape.channels
+            keypoint_heatmap_shape = input_shapes["keypoint_heatmap_shape"]
+            person_box_features_shape = input_shapes["keypoint_heatmap_shape"]
+            if self.use_person_features:
+                person_box_features_shape = self.person_branch.output_shape
+            if self.use_kpts_features:
+                keypoint_heatmap_shape = self.kpts_branch.output_shape
+            assert person_box_features_shape.height == keypoint_heatmap_shape.height
+            assert person_box_features_shape.width == keypoint_heatmap_shape.width
+            in_channels = keypoint_heatmap_shape.channels + person_box_features_shape.channels
         for name, out_channels in zip(self.output_head_names, self.output_head_channels):
             module = self._init_output_layers(conv_dims, in_channels, out_channels)
             self.add_module(name, module)
-        self.use_person_features = hasattr(self, "person_branch")
-        self.use_kpts_features = hasattr(self, "kpts_branch")
+
         self.offset_reg = hasattr(self, "offset")
         assert self.use_person_features or self.use_kpts_features, "One of them has to be True."
         self._init_weights()
 
 
     def _init_weights(self):
-        for name, param in self.named_parameters():
-            if "bias" in name:
-                nn.init.constant_(param, 0)
-            elif "weight" in name:
-                # Caffe2 implementation uses MSRAFill, which in fact
-                # corresponds to kaiming_normal_ in PyTorch
-                nn.init.kaiming_normal_(param, mode="fan_out", nonlinearity="relu")
+        def normal_init(module, mean=0, std=1, bias=0):
+            if hasattr(module, 'weight') and module.weight is not None:
+                nn.init.normal_(module.weight, mean, std)
+            if hasattr(module, 'bias') and module.bias is not None:
+                nn.init.constant_(module.bias, bias)
+        def kaiming_normal_init(module, mode="fan_out", nonlinearity="relu", bias=0):
+            if hasattr(module, 'weight') and module.weight is not None:
+                nn.init.kaiming_normal_(module.weight, mode=mode, nonlinearity=nonlinearity)
+            if hasattr(module, 'bias') and module.bias is not None:
+                nn.init.constant_(module.bias, bias)
+
+        for m in self.modules():
+            if isinstance(m, Conv2d):
+                kaiming_normal_init(m)
 
         # for output layer, init with CenterNet params
         if hasattr(self, "center"):
-            self.center[-1].bias.data.fill_(self.focal_bias)
+            # for m in self.center.modules():
+            #     if isinstance(m, Conv2d):
+            #         normal_init(m, std=0.001)
             nn.init.normal_(self.center[-1].weight, std=0.001)
+            self.center[-1].bias.data.fill_(self.focal_bias)
         if hasattr(self, "size"):
-            self.size[-1].bias.data.fill_(0.)
+            # for m in self.size.modules():
+            #     if isinstance(m, Conv2d):
+            #         normal_init(m, std=0.001)
             nn.init.normal_(self.size[-1].weight, std=0.001)
+            self.size[-1].bias.data.fill_(0.)
         if hasattr(self, "offset"):
-            self.offset[-1].bias.data.fill_(0.)
+            # for m in self.offset.modules():
+            #     if isinstance(m, Conv2d):
+            #         normal_init(m, std=0.001)
             nn.init.normal_(self.offset[-1].weight, std=0.001)
+            self.offset[-1].bias.data.fill_(0.)
 
 
     def _init_output_layers(self, conv_dims, in_channels, output_channels):
