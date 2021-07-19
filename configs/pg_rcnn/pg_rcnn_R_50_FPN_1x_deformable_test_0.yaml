@@ -1,7 +1,7 @@
 _BASE_: "pg_rcnn_base.yaml"
 MODEL:
   WEIGHTS: ./output/pg_rcnn/deformable_head/test_video_0/model_final.pth
-  ROI_DIGIT_HEAD:
+  ROI_DIGIT_NECK:
     DEFORMABLE: True
   RPN:
     PRE_NMS_TOPK_TRAIN: 500  # Per FPN level

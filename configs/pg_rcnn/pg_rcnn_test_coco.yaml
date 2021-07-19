@@ -1,6 +1,6 @@
 _BASE_: "pg_rcnn_base.yaml"
 MODEL:
-  ROI_DIGIT_HEAD:
+  ROI_DIGIT_NECK:
     NUM_PROPOSAL: 20
 DATASETS:
   TRAIN: ("svhn_train", "keypoints_coco_2017_val_100", "jerseynumbers_train")

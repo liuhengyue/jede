@@ -1,6 +1,6 @@
 _BASE_: "pg_rcnn_base.yaml"
 MODEL:
-  ROI_DIGIT_HEAD:
+  ROI_DIGIT_NECK:
     NUM_PROPOSAL: 2
 DATASETS:
   NUM_IMAGES: -1 # change the number of images to load

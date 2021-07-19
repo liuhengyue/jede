@@ -11,7 +11,7 @@ from detectron2.utils.events import get_event_storage
 from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY
 
 
-from pgrcnn.modeling.kpts2digit_head import build_digit_head
+from pgrcnn.modeling.digit_neck import build_digit_neck
 from pgrcnn.modeling.utils.decode_utils import ctdet_decode
 from pgrcnn.modeling.digit_head import DigitOutputLayers
 from pgrcnn.structures import Boxes, Players, inside_matched_box
@@ -31,12 +31,14 @@ __all__ = ["PGROIHeads"]
 class PGROIHeads(BaseROIHeads):
     def __init__(self, cfg, input_shape):
         super(PGROIHeads, self).__init__(cfg, input_shape)
-        self.num_digit_classes = cfg.MODEL.ROI_DIGIT_HEAD.NUM_DIGIT_CLASSES
-        self.use_person_box_features = cfg.MODEL.ROI_DIGIT_HEAD.USE_PERSON_BOX_FEATURES
-        self.num_proposal_train = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL_TRAIN
-        self.num_proposal_test = cfg.MODEL.ROI_DIGIT_HEAD.NUM_PROPOSAL_TEST
+        self.enable_pose_guide = cfg.MODEL.ROI_HEADS.ENABLE_POSE_GUIDE
+        self.num_digit_classes = cfg.MODEL.ROI_DIGIT_NECK.NUM_DIGIT_CLASSES
+        self.use_person_box_features = cfg.MODEL.ROI_DIGIT_NECK.USE_PERSON_BOX_FEATURES
+        self.use_kpts_features = cfg.MODEL.ROI_DIGIT_NECK.USE_KEYPOINTS_FEATURES
+        self.num_proposal_train = cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN
+        self.num_proposal_test = cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST
         self.num_interests = cfg.DATASETS.NUM_INTERESTS
-        self.batch_digit_size_per_image = cfg.MODEL.ROI_DIGIT_HEAD.BATCH_DIGIT_SIZE_PER_IMAGE
+        self.batch_digit_size_per_image = cfg.MODEL.ROI_DIGIT_NECK.BATCH_DIGIT_SIZE_PER_IMAGE
         self._init_digit_head(cfg, input_shape)
 
 
@@ -97,6 +99,22 @@ class PGROIHeads(BaseROIHeads):
         assert len(set(in_channels)) == 1, in_channels
         in_channels = in_channels[0]
 
+        # digit_neck is used for predicting the initial digit bboxes
+        # digit neck takes in the features,
+        # and keypoint heatmaps of K x 56 x 56,
+        # where K could be 4 or 17 depending on
+        K = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS if cfg.DATASETS.PAD_TO_FULL else cfg.DATASETS.NUM_KEYPOINTS
+        out_size = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION * 4
+        # construct the input shapes, in the order of keypoint heatmap, then person box features
+        input_shapes = {
+            "keypoint_heatmap_shape": ShapeSpec(channels=K, height=out_size, width=out_size),
+            "person_box_features_shape": ShapeSpec(channels=in_channels, height=self.keypoint_pooler.output_size[0], width=self.keypoint_pooler.output_size[1])
+        }
+
+        if self.enable_pose_guide:
+            self.digit_neck = build_digit_neck(
+                cfg, input_shapes
+            )
 
         # these are used for digit classification/regression after we get the digit ROI
         self.digit_box_pooler = ROIPooler(
@@ -112,21 +130,6 @@ class PGROIHeads(BaseROIHeads):
 
         self.digit_box_predictor = DigitOutputLayers(cfg, self.box_head.output_shape)
 
-        # digit_head is used for predicting the initial digit bboxes
-        # digit head takes in the features,
-        # and keypoint heatmaps of K x 56 x 56,
-        # where K could be 4 or 17 depending on
-        K = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS if cfg.DATASETS.PAD_TO_FULL else cfg.DATASETS.NUM_KEYPOINTS
-        out_size = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION * 4
-        # construct the input shapes, in the order of keypoint heatmap, then person box features
-        input_shapes = {
-            "keypoint_heatmap_shape": ShapeSpec(channels=K, height=out_size, width=out_size),
-            "person_box_features_shape": ShapeSpec(channels=in_channels, height=pooler_resolution, width=pooler_resolution)
-        }
-        self.digit_head = build_digit_head(
-            cfg, input_shapes
-        )
-
 
 
     def _forward_pose_guided(self, features, instances):
@@ -135,26 +138,38 @@ class PGROIHeads(BaseROIHeads):
 
         Arguments:
         """
+
+
         features = [features[f] for f in self.box_in_features]
         device = features[0].device
+        # when disabled
+        if not self.enable_pose_guide:
+            detections = [None for _ in instances]
+            # assign new fields to instances
+            self.label_and_sample_digit_proposals(detections, instances)
+            return {}
         if self.use_person_box_features:
             # we pool the features again for convenience
             # 14 x 14 pooler
             if self.training:
-                box_features = self.keypoint_pooler(features, [x.proposal_boxes if x.has("proposal_boxes")
+                person_features = self.keypoint_pooler(features, [x.proposal_boxes if x.has("proposal_boxes")
                                                                else Boxes([]).to(device) for x in instances])
             else:
-                box_features = self.keypoint_pooler(features, [x.pred_boxes for x in instances])
+                person_features = self.keypoint_pooler(features, [x.pred_boxes for x in instances])
         else:
-            box_features = None
-        kpts_logits = cat([b.pred_keypoints_logits if b.has("pred_keypoints_logits")
-                           else torch.empty((0, self.keypoint_head.num_keypoints,
-                                             int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[0]),
-                                             int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[1])),
-                                             dtype=torch.float32, device=device)
-                           for b in instances], dim=0)
+            person_features = None
+
+        if self.use_kpts_features:
+            kpts_features = cat([b.pred_keypoints_logits if b.has("pred_keypoints_logits")
+                               else torch.empty((0, self.keypoint_head.num_keypoints,
+                                                 int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[0]),
+                                                 int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[1])),
+                                                 dtype=torch.float32, device=device)
+                               for b in instances], dim=0)
+        else:
+            kpts_features = None
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
-        center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_head(kpts_logits, box_features)
+        center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_neck(kpts_features, person_features)
         if self.training:
             loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps, instances)
             with torch.no_grad():
@@ -166,6 +181,7 @@ class PGROIHeads(BaseROIHeads):
                                           reg=offset_heatmaps,
                                           K=self.num_proposal_train,
                                           feature_scale="feature")
+                # deal with svhn since the instances will not contain proposal_boxes
                 len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                 detections = list(detections.split(len_instances))
                 # assign new fields to instances

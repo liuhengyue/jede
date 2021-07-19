@@ -12,13 +12,29 @@ import tqdm
 from fvcore.common.file_io import PathManager
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
-from detectron2.structures import BoxMode, Keypoints
+from detectron2.structures import BoxMode, Keypoints, Instances
 from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 from pgrcnn.utils.launch_utils import setup
 from pgrcnn.structures import Players, Boxes
 
 
-def create_instances(predictions, image_size):
+def create_instances(predictions, image_size, p_conf_threshold=0, d_conf_threshold=0, digit_only=False):
+    if digit_only:
+        ret = Instances(image_size)
+        if not len(predictions):
+            ret.scores = torch.empty((0,), dtype=torch.float32)
+            ret.pred_boxes = Boxes([])
+            ret.pred_classes = torch.empty((0,), dtype=torch.long)
+            return ret
+        boxes = BoxMode.convert(torch.as_tensor([p["bbox"] for p in predictions]), BoxMode.XYWH_ABS,
+                                BoxMode.XYXY_ABS)
+        scores = torch.as_tensor([p["score"] for p in predictions])
+        labels = torch.as_tensor([p["category_id"] for p in predictions], dtype=torch.long)
+        ret.scores = scores
+        ret.pred_boxes = Boxes(boxes)
+        ret.pred_classes = labels
+        ret = ret[ret.scores > p_conf_threshold]
+        return ret
     ret = Players(image_size)
     # add fields
     # labels = [dataset_id_map(p["category_id"]) for p in predictions]
@@ -53,16 +69,7 @@ def create_instances(predictions, image_size):
     ret.pred_digit_classes = labels
 
     # filter low confident person detection
-    # ret = ret[ret.scores > args.p_conf_threshold]
-
-    # thresholds = np.asarray([args.p_conf_threshold if label == 0 else args.d_conf_threshold for label in labels])
-    # chosen = (score > thresholds).nonzero()[0]
-    # score = score[chosen]
-    # bbox = np.asarray([predictions[i]["bbox"] for i in chosen])
-    # bbox = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS) if bbox.size > 0 else bbox
-    # labels = np.asarray([labels[i] for i in chosen])
-
-
+    ret = ret[ret.scores > p_conf_threshold]
     return ret
 
 
@@ -70,8 +77,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="A script that visualizes the json predictions from COCO or jerseynumbers_val dataset."
     )
-    # parser.add_argument("--input", required=True, help="JSON file produced by the model")
-    # parser.add_argument("--output", required=True, help="output directory")
     parser.add_argument("--config-file", help="config file path", default="configs/pg_rcnn/pg_rcnn_test.yaml")
     parser.add_argument("--dataset", help="name of the dataset", default="jerseynumbers_val")
     parser.add_argument("--p-conf-threshold", default=0.5, type=float, help="person confidence threshold")
@@ -113,13 +118,15 @@ if __name__ == "__main__":
         raise ValueError("Unsupported dataset: {}".format(args.dataset))
 
     os.makedirs(args.output, exist_ok=True)
-
     for dic in tqdm.tqdm(dicts):
         img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
         basename = os.path.basename(dic["file_name"])
         basename_wo_extension = os.path.splitext(basename)[0]
 
-        predictions = create_instances(pred_by_image[dic["image_id"]], img.shape[:2])
+        predictions = create_instances(pred_by_image[dic["image_id"]], img.shape[:2],
+                                       p_conf_threshold=args.p_conf_threshold,
+                                       d_conf_threshold=args.d_conf_threshold,
+                                       digit_only=cfg.DATASETS.DIGIT_ONLY)
         # vis_pred = JerseyNumberVisualizer(img, metadata, montage=False)
         # vis_pred.draw_instance_predictions(predictions)
         # vis_pred.get_output().save(os.path.join(args.output, "{}_pred.pdf".format(basename_wo_extension)))
