@@ -8,7 +8,10 @@ from pgrcnn.structures import Players
 def compute_targets(
         instances_per_image: Players,
         heatmap_size: Tuple[int, int, int],
-        offset_reg: bool = True
+        offset_reg: bool = True,
+        size_target_type: str = Union["wh", "ltrb"],
+        size_target_scale: str = Union["feature", "ratio"],
+        min_overlap: float = 0.3
 ) -> Tuple[torch.Tensor, torch.Tensor, Union[torch.Tensor, None], torch.Tensor]:
     """
         Encode keypoint locations into a target heatmap for use in Gaussian Focal loss.
@@ -45,12 +48,23 @@ def compute_targets(
     # record the positive locations
     valid = []
     # gt scale targets
-    scale_targets = []
+    if size_target_type == "wh":
+        scale_targets = []
+    elif size_target_type == "ltrb":
+        scale_targets = torch.zeros((N, 4, H, W), device=pred_keypoint_logits.device)
+    else:
+        raise NotImplementedError()
     offset_targets = []
     offset_x = rois[:, 0]
     offset_y = rois[:, 1]
-    scale_x = W / (rois[:, 2] - rois[:, 0])
-    scale_y = H / (rois[:, 3] - rois[:, 1])
+    if size_target_scale == "feature":
+        scale_x = W / (rois[:, 2] - rois[:, 0])
+        scale_y = H / (rois[:, 3] - rois[:, 1])
+    elif size_target_scale == "ratio": # wrt to person roi
+        scale_x = 1. / (rois[:, 2] - rois[:, 0])
+        scale_y = 1. / (rois[:, 3] - rois[:, 1])
+    else:
+        raise NotImplementedError()
 
     # process per roi
     for i, (kpts, scale, dx, dy, dw, dh, roi) in \
@@ -65,8 +79,8 @@ def compute_targets(
         y = (y - dy) * dh
         if offset_reg:
             # also compute a offset shift for prediction
-            x_offset_reg = x - x.floor().long()
-            y_offset_reg = y - y.floor().long()
+            x_offset_reg = x - x.floor()
+            y_offset_reg = y - y.floor()
         x = x.floor().long()
         y = y.floor().long()
 
@@ -78,8 +92,8 @@ def compute_targets(
         y = y[valid_loc]
         x = x[valid_loc]
         # digit box size in feature size (w, h)
-        scale = scale[valid_loc] * torch.stack((dw, dh))[None, ...]
-        radius = gaussian_radius(scale, min_overlap=0.3).int()
+        scale = scale[valid_loc] * torch.stack((dw, dh))[None, ...] # (N, 2)
+        radius = gaussian_radius(scale, min_overlap=min_overlap).int()
         radius = torch.maximum(torch.zeros_like(radius), radius)
         gen_gaussian_target(heatmaps[i],
                             [x, y],
@@ -88,7 +102,14 @@ def compute_targets(
         valid.append(
             torch.stack(((torch.ones_like(x) * i).long(), y, x), dim=1)
         )
-        scale_targets.append(scale)
+        if size_target_type == "wh":
+            scale_targets.append(scale)
+        elif size_target_type == "ltrb":
+            gen_ltrb_target(scale_targets[i],
+                            [x, y],
+                            radius,
+                            scale)
+
         if offset_reg:
             y_offset_reg = y_offset_reg[valid_loc]
             x_offset_reg = x_offset_reg[valid_loc]
@@ -96,7 +117,7 @@ def compute_targets(
 
     # we may have different number of valid points within each roi, so cat
     return heatmaps, \
-           torch.cat(scale_targets, dim=0), \
+           torch.cat(scale_targets, dim=0) if size_target_type == "wh" else scale_targets, \
            torch.cat(offset_targets, dim=0) if len(offset_targets) else None, \
            torch.cat(valid, dim=0)
 
@@ -106,10 +127,8 @@ def gaussian2D(radius, sigma=1):
     """Generate 2D gaussian kernel.
 
     Args:
-        radius (int): Radius of gaussian kernel.
+        radius (tensor): Radius of gaussian kernel.
         sigma (int): Sigma of gaussian function. Default: 1.
-        dtype (torch.dtype): Dtype of gaussian tensor. Default: torch.float32.
-        device (str): Device of gaussian tensor. Default: 'cpu'.
 
     Returns:
         h (Tensor): Gaussian kernel with a
@@ -130,6 +149,27 @@ def gaussian2D(radius, sigma=1):
         guassian_masks.append(h)
     return guassian_masks
 
+def meshgrid2D(radius):
+    """Generate 2D gaussian kernel.
+
+    Args:
+        radius (tensor): Radius of gaussian kernel.
+        sigma (int): Sigma of gaussian function. Default: 1.
+
+    Returns:
+        h (Tensor): Gaussian kernel with a
+            ``(2 * radius + 1) * (2 * radius + 1)`` shape.
+    """
+    num_instances = radius.size(0)
+    starts, ends = -radius, radius + 1
+    guassian_masks = []
+    # different gauss kernels have different range, had to use loop
+    for i in range(num_instances):
+        y, x = torch.meshgrid(torch.arange(starts[i][1], ends[i][1], device=radius.device),
+                              torch.arange(starts[i][0], ends[i][0], device=radius.device),
+                              )
+        guassian_masks.append((y, x))
+    return guassian_masks
 
 
 
@@ -193,3 +233,52 @@ def gaussian_radius(det_size, min_overlap=0.1):
     return radius_a_b
 
 
+def compute_locations(size, device):
+    h, w = size
+    shifts_x = torch.arange(
+        -w/2, w/2, dtype=torch.float32, device=device
+    )
+    shifts_y = torch.arange(
+        -h/2, h/2, dtype=torch.float32, device=device
+    )
+    shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x)
+
+    return shift_y, shift_x
+
+def gen_ltrb_target(heatmap, center, radius, wh, stride=1):
+    """Generate 2D gaussian heatmap.
+
+    Args:
+        heatmap (Tensor): Input heatmap, the gaussian kernel will cover on
+            it and maintain the max value.
+        center (list[Tensor]): Coord of gaussian kernel's center.
+        radius (Tensor): x-axis and y-axis Radius of gaussian kernel.
+        wh (Tensor).
+
+    Returns:
+        out_heatmap (Tensor): Updated heatmap covered by gaussian kernel.
+    """
+    if heatmap.numel() == 0 or wh.numel() == 0:
+        return heatmap
+
+    grids = meshgrid2D(radius)
+    x, y = center
+
+    height, width = heatmap.shape[-2:]
+    left, right = torch.min(x, radius[:, 0]), torch.min(width - x, radius[:, 0] + 1)
+    top, bottom = torch.min(y, radius[:, 1]), torch.min(height - y, radius[:, 1] + 1)
+    for i, (y_grid, x_grid) in enumerate(grids):
+        shift_x = x_grid[radius[i, 1] - top[i]:radius[i, 1] + bottom[i],
+                               radius[i, 0] - left[i]:radius[i, 0] + right[i]]
+        shift_y = y_grid[radius[i, 1] - top[i]:radius[i, 1] + bottom[i],
+                               radius[i, 0] - left[i]:radius[i, 0] + right[i]]
+        box_width, box_height = wh[i]
+        l = shift_x + box_width / 2
+        t = shift_y + box_height / 2
+        r = box_width / 2 - shift_x
+        b = box_height / 2 - shift_y
+        reg_ltrb = torch.stack([l, t, r, b])
+        heatmap[:,
+        y[i] - top[i]:y[i] + bottom[i],
+        x[i] - left[i]:x[i] + right[i]] = reg_ltrb
+    return heatmap

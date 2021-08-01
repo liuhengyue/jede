@@ -86,7 +86,7 @@ def fast_rcnn_inference(boxes, scores, num_instances, image_shapes, score_thresh
         scores (list[Tensor]): A list of Tensors of predicted class scores for each image.
             Element i has shape (Ri, K + 1), where Ri is the number of predicted objects
             for image i. Compatible with the output of :meth:`FastRCNNOutputLayers.predict_probs`.
-        num_instances (list[int]): A list of integers indicating the number of person instances
+        num_instances (list[list[int]]): A list of integers indicating the number of person instances
             for each image.
         image_shapes (list[tuple]): A list of (width, height) tuples for each image in the batch.
         score_thresh (float): Only return detections with a confidence score exceeding this
@@ -183,6 +183,8 @@ def fast_rcnn_inference_single_image(
     result.pred_digit_boxes = boxes
     result.digit_scores = scores
     result.pred_digit_classes = pred_digit_classes
+    # todo: maybe better way to get the number
+    result.pred_jersey_numbers =  [pred_digit_cls[[0, -1]] if pred_digit_cls.numel() else pred_digit_cls for pred_digit_cls in pred_digit_classes]
     return result, filter_inds[:, 0]
 
 

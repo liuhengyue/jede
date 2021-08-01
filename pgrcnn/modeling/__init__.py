@@ -6,12 +6,19 @@ from .pg_head import (
 )
 from .keypoint_head import KPGRCNNHead
 
-from .digit_neck import build_digit_neck
-from .digit_neck_branches import build_digit_neck_branch
-from .meta_arch import (
-    META_ARCH_REGISTRY,
-    pgrcnn
+from .digit_neck import (
+    build_digit_neck,
+    DigitNeck
 )
+
+from .digit_neck_branches import (
+    build_digit_neck_branch,
+    PersonROIBranch,
+    KptsROIBranch,
+    KptsAttentionBranch,
+)
+
+from .meta_arch import pgrcnn
 from .utils import compute_targets
 
 _EXCLUDE = {"ShapeSpec"}

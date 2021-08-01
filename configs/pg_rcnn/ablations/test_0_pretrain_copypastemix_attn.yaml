@@ -1,0 +1,18 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
+  ROI_DIGIT_NECK:
+    FUSION_TYPE: "sum"
+    NORM: ""
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: ""
+    KEYPOINTS_BRANCH:
+      NAME: "KptsAttentionBranch"
+      UP_SCALE: 2
+INPUT:
+  AUG:
+    COPY_PASTE_MIX: 22
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_pretrain_copypastemix_attn

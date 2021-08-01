@@ -23,7 +23,7 @@ SOLVER:
 OUTPUT_DIR: ./output/faster_rcnn/test_video_0/
 INPUT:
   CROP:
-    ENABLED: True
+    ENABLED: False
     SIZE: [ 0.8, 1.0 ]
   MAX_SIZE_TRAIN: 800
   MIN_SIZE_TRAIN: (480, 512, 544, 576, 608, 640)

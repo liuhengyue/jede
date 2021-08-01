@@ -1,11 +1,16 @@
 _BASE_: "../pg_rcnn_base.yaml"
 MODEL:
   ROI_DIGIT_NECK:
+    FUSION_TYPE: "cat"
     NORM: "GN"
+    OUTPUT_HEAD_CHANNELS: (1, 4, 2)
+    SIZE_TARGET_TYPE: "ltrb"
+    NUM_PROPOSAL_TRAIN: 100
+#    OUTPUT_HEAD_WEIGHTS: (1.0, 1.0, 1.0)
   ROI_DIGIT_NECK_BRANCHES:
     NORM: "GN"
     KEYPOINTS_BRANCH:
-      NAME: "KptsAttentionBranch"
+      NAME: ""
       UP_SCALE: 2
 DATASETS:
   NUM_IMAGES: 1 # change the number of images to load

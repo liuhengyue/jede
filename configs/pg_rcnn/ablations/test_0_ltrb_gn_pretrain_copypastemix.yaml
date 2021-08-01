@@ -1,0 +1,17 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
+INPUT:
+  AUG:
+    COPY_PASTE_MIX: 22
+MODEL:
+  ROI_DIGIT_NECK:
+    NORM: "GN"
+    OUTPUT_HEAD_CHANNELS: (1, 4, 2)
+    SIZE_TARGET_TYPE: "ltrb"
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: "GN"
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_ltrb_gn_pretrain_copypastemix

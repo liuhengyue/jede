@@ -67,6 +67,9 @@ def add_poseguide_config(cfg):
 
     _C.MODEL.ROI_HEADS.NAME = "PGROIHeads"
     _C.MODEL.ROI_HEADS.ENABLE_POSE_GUIDE = True
+    _C.MODEL.ROI_HEADS.OFFSET_TEST = 0.0 # add a small number (feature level wrt 56x56) to get a larger bounding box
+
+    _C.MODEL.ROI_BOX_HEAD.DIGIT_POOLER_RESOLUTION = 7
 
     _C.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE = 1 # we can train without keypoints
 
@@ -74,6 +77,7 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_NECK.NAME = "DigitNeck"
     _C.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_NAMES = ("center", "size", "offset")
     _C.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_CHANNELS = (1, 2, 2)
+    _C.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_WEIGHTS = (1.0, 0.1, 1.0)
     _C.MODEL.ROI_DIGIT_NECK.USE_PERSON_BOX_FEATURES = True
     _C.MODEL.ROI_DIGIT_NECK.USE_KEYPOINTS_FEATURES = True
     _C.MODEL.ROI_DIGIT_NECK.BBOX_REG_LOSS_TYPE = "smooth_l1"
@@ -81,8 +85,10 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_NECK.DEFORMABLE = False
     _C.MODEL.ROI_DIGIT_NECK.BATCH_DIGIT_SIZE_PER_IMAGE = 256 # number of digit rois to train per image
     # these two are the number of digit proposals per person roi
-    _C.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN = 20
-    _C.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST = 5
+    _C.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_SCALE = "feature"
+    _C.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_TYPE = "wh"
+    _C.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN = 100
+    _C.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST = 20
     _C.MODEL.ROI_DIGIT_NECK.NUM_CONV = 4
     _C.MODEL.ROI_DIGIT_NECK.CONV_DIM = 64
     _C.MODEL.ROI_DIGIT_NECK.NORM = ""

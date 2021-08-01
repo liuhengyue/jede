@@ -1,0 +1,12 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  ROI_DIGIT_NECK:
+    NORM: ""
+    OUTPUT_HEAD_CHANNELS: (1, 4, 2)
+    SIZE_TARGET_TYPE: "ltrb"
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: ""
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_ltrb

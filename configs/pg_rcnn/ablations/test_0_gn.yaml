@@ -1,4 +1,4 @@
-_BASE_: "../../pg_rcnn_base.yaml"
+_BASE_: "../pg_rcnn_base.yaml"
 MODEL:
   ROI_DIGIT_NECK:
     NORM: "GN"
@@ -7,4 +7,4 @@ MODEL:
 DATASETS:
   TRAIN_VIDEO_IDS: [1,2,3]
   TEST_VIDEO_IDS: [0]
-OUTPUT_DIR: ./output/pg_rcnn/ablations/group_norm/test_0
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_gn

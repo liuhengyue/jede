@@ -3,7 +3,7 @@ from typing import Any, List, Tuple, Union
 import torch
 import torch.nn.functional as F
 
-def get_local_maximum(heat, kernel=3):
+def get_local_maximum(heat, kernel=1):
     """Extract local maximum pixel with given kernal.
 
     Args:
@@ -156,22 +156,23 @@ def _topk(scores, K=40, largest=True):
 
     return topk_score, topk_inds, topk_clses, topk_ys, topk_xs
 
-def _sample_top_n_bttm_k(scores, k=10, ratio=1/4):
-    topk = get_topk_from_heatmap(scores, k=round(k * ratio))
-    bttm2k = get_topk_from_heatmap(scores, k=round(k * (1 - ratio)), largest=False)
-    return [torch.cat((t, b), dim=-1) for t, b in zip(topk, bttm2k)]
 
-def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_scale="feature", training=True):
+def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100,
+                 size_target_type="wh",
+                 size_target_scale="feature",
+                 training=True,
+                 fg_ratio=1/2,
+                 offset=0):
     batch, cat, height, width = heat.size()
 
     if batch == 0:
         return torch.zeros(0, 0, 6, device=heat.device)
 
-    heat = torch.sigmoid(heat)
+    # heat = torch.sigmoid(heat)
     # perform nms on heatmaps
     heat = get_local_maximum(heat)
     if training:
-        scores, inds, clses, ys, xs = get_topk_random_from_heatmap(heat, k=K)
+        scores, inds, clses, ys, xs = get_topk_random_from_heatmap(heat, k=K, ratio=fg_ratio)
     else:
         scores, inds, clses, ys, xs = get_topk_from_heatmap(heat, k=K)
     if reg is not None:
@@ -193,26 +194,58 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100, feature_sca
     xs = (xs / width) * roi_widths + offset_x
     ys = (ys / height) * roi_heights + offset_y
     wh = _transpose_and_gather_feat(wh, inds)
-    # we could have negative width or height
-    wh.clamp_(min=0)
+    # we could have negative width or height (solved by using relu)
+    # we may have values larger than the feature box
+    wh.clamp_(max=height)
+    # we can add a offset manually to enlarge the detected bounding boxes
+    # wh[..., 1].add_(offset)
+    # wh += offset
     if cat_spec_wh:
-        wh = wh.view(batch, K, cat, 2)
-        clses_ind = clses.view(batch, K, 1, 1).expand(batch, K, 1, 2).long()
-        wh = wh.gather(2, clses_ind).view(batch, K, 2)
+        wh = wh.view(batch, K, cat, -1)
+        clses_ind = clses.view(batch, K, 1, 1).expand(batch, K, 1, wh.shape[-1]).long()
+        wh = wh.gather(2, clses_ind).view(batch, K, -1)
     else:
-        wh = wh.view(batch, K, 2)
-    if feature_scale == "ratio":
-        wh[..., 0:1] = wh[..., 0:1] * roi_widths
-        wh[..., 1:2] = wh[..., 1:2] * roi_heights
-    elif feature_scale == "feature":
-        wh[..., 0:1] = (wh[..., 0:1] / width) * roi_widths
-        wh[..., 1:2] = (wh[..., 1:2] / height) * roi_heights
+        wh = wh.view(batch, K, -1)
+
+    # get image level size
+    if size_target_scale == "ratio":
+        wh[..., 0::2] = wh[..., 0::2] * roi_widths
+        wh[..., 1::2] = wh[..., 1::2] * roi_heights
+    elif size_target_scale == "feature":
+        wh[..., 0::2] = (wh[..., 0::2] / width) * roi_widths
+        wh[..., 1::2] = (wh[..., 1::2] / height) * roi_heights
+    if training:
+        # we have many empty boxes which decrease the number bg samples, add some random boxes
+        # in image scale
+        num_fg = round(K * fg_ratio)
+        # priors: height 0.13 0.03, width 0.17 0.05
+        if size_target_type == "ltrb":
+            roi_scale = torch.cat([roi_widths, roi_heights, roi_widths, roi_heights], dim=2) / 2
+            h1_ratio = torch.normal(0.13, 0.03, (batch, K - num_fg, 1), device=roi_scale.device)
+            w1_ratio = torch.normal(0.17, 0.05, (batch, K - num_fg, 1), device=roi_scale.device)
+            h2_ratio = torch.normal(0.13, 0.03, (batch, K - num_fg, 1), device=roi_scale.device)
+            w2_ratio = torch.normal(0.17, 0.05, (batch, K - num_fg, 1), device=roi_scale.device)
+            scale_ratios = torch.cat([w1_ratio, h1_ratio, w2_ratio, h2_ratio], dim=2)
+        elif size_target_type == "wh":
+            roi_scale = torch.cat([roi_widths, roi_heights], dim=2)
+            h1_ratio = torch.normal(0.13, 0.03, (batch, K - num_fg, 1), device=roi_scale.device)
+            w1_ratio = torch.normal(0.17, 0.05, (batch, K - num_fg, 1), device=roi_scale.device)
+            scale_ratios = torch.cat([w1_ratio, h1_ratio], dim=2)
+        wh[:, num_fg:, ...] += scale_ratios * roi_scale
+
     clses = clses.view(batch, K, 1).float()
     scores = scores.view(batch, K, 1)
-    bboxes = torch.cat([xs - wh[..., 0:1] / 2,
-                        ys - wh[..., 1:2] / 2,
-                        xs + wh[..., 0:1] / 2,
-                        ys + wh[..., 1:2] / 2], dim=2)
+    if size_target_type == "wh":
+        bboxes = torch.cat([xs - wh[..., 0:1] / 2,
+                            ys - wh[..., 1:2] / 2,
+                            xs + wh[..., 0:1] / 2,
+                            ys + wh[..., 1:2] / 2], dim=2)
+    elif size_target_type == "ltrb":
+        bboxes = torch.cat([xs - wh[..., 0:1],
+                            ys - wh[..., 1:2],
+                            xs + wh[..., 2:3],
+                            ys + wh[..., 3:4]], dim=2)
+
     detections = torch.cat([bboxes, scores, clses], dim=2)
 
     return detections

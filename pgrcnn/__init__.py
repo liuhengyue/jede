@@ -1,1 +1,1 @@
-from .modeling.meta_arch import PGRCNN
+from .modeling import *

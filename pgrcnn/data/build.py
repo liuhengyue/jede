@@ -152,6 +152,8 @@ def build_detection_train_loader(cfg, mapper=None):
                          applicable_inds=applicable_inds)
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
+    if len(cfg.DATASETS.TRAIN) > 1:
+        assert sampler_name == "WeightedTrainingSampler", "Please set `DATALOADER.SAMPLER_TRAIN = WeightedTrainingSampler' to train on multiple datasets."
     logger = logging.getLogger(__name__)
     logger.info("Using training sampler {}".format(sampler_name))
     if sampler_name == "TrainingSampler":

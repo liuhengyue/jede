@@ -1,0 +1,16 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
+INPUT:
+  AUG:
+    COPY_PASTE_MIX: 22
+DATASETS:
+  TRAIN: ("svhn_train", "keypoints_coco_2017_train", "jerseynumbers_train")
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+DATALOADER:
+  SAMPLER_TRAIN: WeightedTrainingSampler
+SOLVER:
+  STEPS: (240000,)
+  MAX_ITER: 300000
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_trainmix_copypastemix

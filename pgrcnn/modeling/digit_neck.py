@@ -53,7 +53,9 @@ class DigitNeck(nn.Module):
         self.use_deform = cfg_roi_digit_neck.DEFORMABLE
 
         self.focal_bias = cfg_roi_digit_neck.FOCAL_BIAS
-
+        activations = {name: activation for name, activation in zip(self.output_head_names, (torch.sigmoid, F.relu, torch.sigmoid))}
+        # activations = {name: activation for name, activation in
+        #                zip(self.output_head_names, (torch.sigmoid, None, None))}
         cfg_roi_digit_neck_branches = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES
         module = build_digit_neck_branch(cfg_roi_digit_neck_branches.PERSON_BRANCH.NAME, cfg, input_shapes["person_box_features_shape"])
         if module:
@@ -65,18 +67,22 @@ class DigitNeck(nn.Module):
         self.use_kpts_features = hasattr(self, "kpts_branch")
         self.fusion_type = cfg_roi_digit_neck.FUSION_TYPE
 
+        keypoint_heatmap_shape = input_shapes["keypoint_heatmap_shape"]
+        person_box_features_shape = input_shapes["keypoint_heatmap_shape"]
+        if self.use_person_features:
+            person_box_features_shape = self.person_branch.output_shape
+        if self.use_kpts_features:
+            keypoint_heatmap_shape = self.kpts_branch.output_shape
         if self.fusion_type == "cat":
-            keypoint_heatmap_shape = input_shapes["keypoint_heatmap_shape"]
-            person_box_features_shape = input_shapes["keypoint_heatmap_shape"]
-            if self.use_person_features:
-                person_box_features_shape = self.person_branch.output_shape
-            if self.use_kpts_features:
-                keypoint_heatmap_shape = self.kpts_branch.output_shape
             assert person_box_features_shape.height == keypoint_heatmap_shape.height
             assert person_box_features_shape.width == keypoint_heatmap_shape.width
             in_channels = keypoint_heatmap_shape.channels + person_box_features_shape.channels
+        elif self.fusion_type == "sum":
+            assert person_box_features_shape == keypoint_heatmap_shape
+            in_channels = keypoint_heatmap_shape.channels
         for name, out_channels in zip(self.output_head_names, self.output_head_channels):
-            module = self._init_output_layers(conv_dims, in_channels, out_channels)
+            activation = activations[name]
+            module = self._init_output_layers(conv_dims, in_channels, out_channels, activation=activation)
             self.add_module(name, module)
 
         self.offset_reg = hasattr(self, "offset")
@@ -121,7 +127,7 @@ class DigitNeck(nn.Module):
             self.offset[-1].bias.data.fill_(0.)
 
 
-    def _init_output_layers(self, conv_dims, in_channels, output_channels):
+    def _init_output_layers(self, conv_dims, in_channels, output_channels, activation=None):
         ### add center, scale, and offset heads ###
         modules = []
         # The conv dims currently are same
@@ -145,7 +151,7 @@ class DigitNeck(nn.Module):
             kernel_size=1,
             bias=True,
             norm=None,
-            activation=None, # need logits for sigmoid
+            activation=activation, # need logits for sigmoid
         )
         modules.append(head)
         return nn.Sequential(*modules)
@@ -158,6 +164,8 @@ class DigitNeck(nn.Module):
         # merge the features
         if self.fusion_type == "cat":
             kpts_features = torch.cat((kpts_features, person_features), dim=1)
+        elif self.fusion_type == "sum":
+            kpts_features = torch.add(kpts_features, person_features)
         #  kpts_features will be feed into two heads
         x = kpts_features
         y = kpts_features

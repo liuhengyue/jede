@@ -11,6 +11,11 @@ conda install pytorch==1.8.0 torchvision==0.9.0 torchaudio==0.8.0 cudatoolkit=10
 pip install opencv-python
 ```
 
+### TextSpotter v3
+
+```
+pip install pyclipper shapely
+```
 
 
 ### Our code base and Detectron2
@@ -32,6 +37,7 @@ See [installation instructions](https://detectron2.readthedocs.io/tutorials/inst
 
 ```
 mkdir datasets/jnw
+ln -s datasets/jnw detectron2/datasets/jnw
 ```
 
 ### Prepare COCO (Optional)

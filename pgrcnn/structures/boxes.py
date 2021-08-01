@@ -12,6 +12,8 @@ class Boxes(detectron_boxes):
         heights = self.tensor[:, 3] - self.tensor[:, 1]
         return torch.stack((widths, heights), dim=1)
 
+
+
     def remove_duplicates(self, labels):
         # remove duplicate boxes associated with labels, and return the filtered labels
         labels = torch.cat((self.tensor, labels[...,None]), dim=-1)

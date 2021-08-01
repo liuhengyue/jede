@@ -1,0 +1,8 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  ROI_BOX_HEAD:
+    DIGIT_POOLER_RESOLUTION: 14
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_14x14

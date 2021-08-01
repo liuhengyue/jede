@@ -112,6 +112,7 @@ class KptsROIBranch(DigitNeckBranch):
             in_channels = layer_channels
         self._output_size = (in_channels, self._output_size[1] * self.up_scale, self._output_size[2] * self.up_scale)
 
+@ROI_DIGIT_NECK_BRANCHES_REGISTRY.register()
 class KptsAttentionBranch(DigitNeckBranch):
 
     def __init__(self, cfg, input_shape):
@@ -143,9 +144,9 @@ class KptsAttentionBranch(DigitNeckBranch):
                         kernel_size=9,
                         padding=4,
                         dilation=1,
-                        norm1=get_norm(self.norm, out_channels),
+                        norm1=self.norm,
                         activation1=F.relu,
-                        norm2=get_norm(self.norm, out_channels),
+                        norm2=self.norm,
                         activation2=torch.sigmoid,
                     )
         modules.append(module)
@@ -171,7 +172,7 @@ class KptsAttentionBranch(DigitNeckBranch):
             x = self.conv1(x)
             y = x
             x = self.channel_attn(x)
-            y = self.spatial_atten(y)
+            y = self.spatial_attn(y)
             x = torch.mul(x, y)
             x = interpolate(x, scale_factor=self.up_scale, mode="bilinear", align_corners=False)
             return x

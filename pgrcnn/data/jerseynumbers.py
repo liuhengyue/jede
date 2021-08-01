@@ -14,7 +14,7 @@ from fvcore.common.file_io import PathManager, file_lock
 
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
-
+logger = logging.getLogger(__name__)
 # fmt: off
 CLASS_NAMES = [
     'person', '0', '1', '2', '3',
@@ -139,11 +139,34 @@ def get_dicts(data_dir, anno_dir, split=None, digit_only=False, num_images=-1):
         # fixed order
         annotations = annotations[:num_images]
 
+    get_statistics(annotations)
+
     return annotations
 
 
 
-
+def get_statistics(annotations):
+    h_digit_to_person_ratios = []
+    w_digit_to_person_ratios = []
+    for anno_dict in annotations:
+        annos = anno_dict["annotations"]
+        for anno in annos:
+            p_x1, p_y1, p_x2, p_y2 = anno["person_bbox"]
+            p_w = p_x2 - p_x1
+            p_h = p_y2 - p_y1
+            for digit_bbox in anno["digit_bboxes"]:
+                d_x1, d_y1, d_x2, d_y2 = digit_bbox
+                d_w = d_x2 - d_x1
+                d_h = d_y2 - d_y1
+                w_digit_to_person_ratios.append(d_w / p_w)
+                h_digit_to_person_ratios.append(d_h / p_h)
+    h_mean_ratio = np.mean(h_digit_to_person_ratios) if len(h_digit_to_person_ratios) else 0.
+    w_mean_ratio = np.mean(w_digit_to_person_ratios) if len(w_digit_to_person_ratios) else 0.
+    h_std_ratio = np.std(h_digit_to_person_ratios) if len(h_digit_to_person_ratios) else 0.
+    w_std_ratio = np.std(w_digit_to_person_ratios) if len(w_digit_to_person_ratios) else 0.
+    logger.info("Mean / std height digit bbox / person bbox ratio: {} / {}".format(h_mean_ratio, h_std_ratio))
+    logger.info("Mean / std width digit bbox / person bbox ratio: {} / {}".format(w_mean_ratio, w_std_ratio))
+    # return h_mean_ratio, w_mean_ratio
 
 
 def register_jerseynumbers(cfg):

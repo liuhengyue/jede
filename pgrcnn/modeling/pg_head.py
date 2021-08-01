@@ -39,6 +39,10 @@ class PGROIHeads(BaseROIHeads):
         self.num_proposal_test = cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST
         self.num_interests = cfg.DATASETS.NUM_INTERESTS
         self.batch_digit_size_per_image = cfg.MODEL.ROI_DIGIT_NECK.BATCH_DIGIT_SIZE_PER_IMAGE
+        self.offset_test = cfg.MODEL.ROI_HEADS.OFFSET_TEST
+        self.size_target_type = cfg.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_TYPE
+        self.size_target_scale = cfg.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_SCALE
+        self.out_head_weights = cfg.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_WEIGHTS
         self._init_digit_head(cfg, input_shape)
 
 
@@ -86,7 +90,7 @@ class PGROIHeads(BaseROIHeads):
         a cls head, bbox reg head and kpts head
         """
         # fmt: off
-        pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        pooler_resolution = cfg.MODEL.ROI_BOX_HEAD.DIGIT_POOLER_RESOLUTION
         pooler_scales = tuple(1.0 / input_shape[k].stride for k in self.in_features)
         sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
         pooler_type = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
@@ -108,7 +112,9 @@ class PGROIHeads(BaseROIHeads):
         # construct the input shapes, in the order of keypoint heatmap, then person box features
         input_shapes = {
             "keypoint_heatmap_shape": ShapeSpec(channels=K, height=out_size, width=out_size),
-            "person_box_features_shape": ShapeSpec(channels=in_channels, height=self.keypoint_pooler.output_size[0], width=self.keypoint_pooler.output_size[1])
+            "person_box_features_shape": ShapeSpec(channels=in_channels,
+                                                   height=self.keypoint_pooler.output_size[0],
+                                                   width=self.keypoint_pooler.output_size[1])
         }
 
         if self.enable_pose_guide:
@@ -165,13 +171,16 @@ class PGROIHeads(BaseROIHeads):
                                                  int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[0]),
                                                  int(2 * self.keypoint_head.up_scale * self.keypoint_pooler.output_size[1])),
                                                  dtype=torch.float32, device=device)
-                               for b in instances], dim=0)
+                               for b in instances], dim=0).detach()
         else:
             kpts_features = None
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
         center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_neck(kpts_features, person_features)
         if self.training:
-            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps, instances)
+            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps, instances,
+                                size_target_type=self.size_target_type,
+                                size_target_scale=self.size_target_scale,
+                                output_head_weights=self.out_head_weights)
             with torch.no_grad():
                 bboxes_flat = cat([b.proposal_boxes.tensor if b.has("proposal_boxes")
                                    else torch.empty((0, 4), dtype=torch.float32, device=device)
@@ -180,7 +189,8 @@ class PGROIHeads(BaseROIHeads):
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                           reg=offset_heatmaps,
                                           K=self.num_proposal_train,
-                                          feature_scale="feature")
+                                          size_target_type=self.size_target_type,
+                                          size_target_scale=self.size_target_scale)
                 # deal with svhn since the instances will not contain proposal_boxes
                 len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                 detections = list(detections.split(len_instances))
@@ -195,8 +205,11 @@ class PGROIHeads(BaseROIHeads):
             detection = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                      reg=offset_heatmaps,
                                      K=self.num_proposal_test,
-                                     feature_scale="feature",
-                                     training=False)
+                                     size_target_type=self.size_target_type,
+                                     size_target_scale=self.size_target_scale,
+                                     training=False,
+                                     offset = self.offset_test
+            )
             detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))
             detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
             # assign new fields to instances
@@ -311,13 +324,61 @@ def gaussian_focal_loss(pred, gaussian_target, alpha=2.0, gamma=4.0, eps=1e-12):
         gamma (float, optional): The gamma for calculating the modulating
             factor. Defaults to 4.0.
     """
-    pred = torch.sigmoid(pred)
+    # pred = torch.sigmoid(pred)
     pos_weights = gaussian_target.eq(1)
     neg_weights = (1 - gaussian_target).pow(gamma)
     pos_loss = (-(pred + eps).log() * (1 - pred).pow(alpha) * pos_weights).sum()
     neg_loss = (-(1 - pred + eps).log() * pred.pow(alpha) * neg_weights).sum()
     return pos_loss + neg_loss
 
+def ltrb_giou_loss(pred, target, ct_weights = None, eps: float = 1e-7, reduction='sum'):
+    """
+    Args:
+        pred: Nx4 predicted bounding boxes
+        target: Nx4 target bounding boxes
+        Both are in the form of FCOS prediction (l, t, r, b)
+    """
+    # pred.clamp_(min=0)
+    pred_left = pred[:, 0]
+    pred_top = pred[:, 1]
+    pred_right = pred[:, 2]
+    pred_bottom = pred[:, 3]
+
+    target_left = target[:, 0]
+    target_top = target[:, 1]
+    target_right = target[:, 2]
+    target_bottom = target[:, 3]
+
+    target_aera = (target_left + target_right) * \
+                  (target_top + target_bottom)
+    pred_aera = (pred_left + pred_right) * \
+                (pred_top + pred_bottom)
+
+    w_intersect = torch.min(pred_left, target_left) + \
+                  torch.min(pred_right, target_right)
+    h_intersect = torch.min(pred_bottom, target_bottom) + \
+                  torch.min(pred_top, target_top)
+
+    g_w_intersect = torch.max(pred_left, target_left) + \
+                    torch.max(pred_right, target_right)
+    g_h_intersect = torch.max(pred_bottom, target_bottom) + \
+                    torch.max(pred_top, target_top)
+    ac_uion = g_w_intersect * g_h_intersect
+
+    area_intersect = w_intersect * h_intersect
+    area_union = target_aera + pred_aera - area_intersect
+
+    ious = area_intersect / (area_union + eps)
+    gious = ious - (ac_uion - area_union) / (ac_uion + eps)
+    loss = 1 - gious
+    if ct_weights is not None:
+        loss = loss * ct_weights
+    if reduction == "mean":
+        loss = loss.mean() if loss.numel() > 0 else 0.0 * loss.sum()
+    elif reduction == "sum":
+        loss = loss.sum()
+
+    return loss
 
 def pg_rcnn_loss(
         pred_keypoint_logits,
@@ -325,8 +386,9 @@ def pg_rcnn_loss(
         pred_offset_logits,
         instances,
         normalizer=None,
-        size_weight=0.1,
-        offset_weight=1.0
+        output_head_weights=(1,0, 1.0, 1.0),
+        size_target_type="ltrb",
+        size_target_scale="feature"
         ):
     """
     Wrap center and size loss here.
@@ -354,7 +416,10 @@ def pg_rcnn_loss(
     # keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
         heatmaps_per_image, scales_per_image, offsets_per_image, valid_per_image = \
-            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:], offset_reg=has_offset_reg)
+            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:],
+                            offset_reg=has_offset_reg,
+                            size_target_type=size_target_type,
+                            size_target_scale=size_target_scale)
         heatmaps.append(heatmaps_per_image)
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
@@ -378,7 +443,7 @@ def pg_rcnn_loss(
     ct_loss = gaussian_focal_loss(
         pred_keypoint_logits,
         keypoint_targets
-    )
+    ) * output_head_weights[0]
 
     # If a normalizer isn't specified, normalize by the number of visible keypoints in the minibatch
     if normalizer is None:
@@ -386,15 +451,33 @@ def pg_rcnn_loss(
     ct_loss /= normalizer
 
     # size loss
-    # pred_scale_logits = pred_scale_logits.view(N, 2, H * W)
-    pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
-    # we predict the scale wrt. feature box
-    wh_loss = size_weight * F.smooth_l1_loss(pred_scale_logits, scale_targets, reduction='sum') / normalizer
+    if size_target_type == 'wh':
+        pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
+        # we predict the scale wrt. feature box
+        wh_loss = output_head_weights[1] * F.smooth_l1_loss(pred_scale_logits, scale_targets,
+                                                            reduction='sum') / normalizer
+    elif size_target_type == 'ltrb':
+        # valid_loc = (keypoint_targets > 0.).squeeze(1)
+        # giou loss
+        # wh_loss = output_head_weights[1] * ltrb_giou_loss(pred_scale_logits.permute(0, 2, 3, 1)[valid_loc],
+        #                                                   scale_targets.permute(0, 2, 3, 1)[valid_loc],
+        #                                                   None,
+        #                                                   reduction='sum') / valid_loc.sum()
+
+        # smooth_l1
+        # wh_loss = output_head_weights[1] * F.smooth_l1_loss(pred_scale_logits.permute(0, 2, 3, 1)[valid_loc],
+        #                                                     scale_targets.permute(0, 2, 3, 1)[valid_loc],
+        #                                                     reduction='sum') / normalizer
+
+        # weighted by center
+        wh_loss = output_head_weights[1] * (F.smooth_l1_loss(pred_scale_logits,
+                                                          scale_targets) * torch.square(keypoint_targets)).sum()
+
     loss = {'ct_loss': ct_loss, 'wh_loss': wh_loss}
     if has_offset_reg:
         offset_targets = cat(offset_targets, dim=0)
         pred_offset_logits = pred_offset_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
-        os_loss = offset_weight * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
+        os_loss = output_head_weights[2] * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
         loss.update({"os_loss": os_loss})
 
     return loss
