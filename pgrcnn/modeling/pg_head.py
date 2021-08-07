@@ -2,7 +2,7 @@ import logging
 import torch
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
-from detectron2.layers import ShapeSpec
+from detectron2.layers import ShapeSpec, cross_entropy
 from detectron2.modeling.poolers import ROIPooler
 from detectron2.modeling.roi_heads import build_box_head
 from detectron2.structures import ImageList
@@ -18,7 +18,7 @@ from pgrcnn.structures import Boxes, Players, inside_matched_box
 from pgrcnn.modeling.roi_heads import BaseROIHeads
 from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from pgrcnn.modeling.utils import compute_targets
-
+from .jersey_number_head import build_jersey_number_head
 
 
 _TOTAL_SKIPPED = 0
@@ -43,6 +43,7 @@ class PGROIHeads(BaseROIHeads):
         self.size_target_type = cfg.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_TYPE
         self.size_target_scale = cfg.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_SCALE
         self.out_head_weights = cfg.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_WEIGHTS
+        self.enable_jersey_number_det = cfg.MODEL.ROI_JERSEY_NUMBER_DET.NAME is not None
         self._init_digit_head(cfg, input_shape)
 
 
@@ -122,6 +123,13 @@ class PGROIHeads(BaseROIHeads):
                 cfg, input_shapes
             )
 
+        # add classification of number of jersey number
+        if self.enable_jersey_number_det:
+            feat_shape = ShapeSpec(channels=self.digit_neck.output_head_channels[0],
+                                   height=input_shapes["keypoint_heatmap_shape"].height,
+                                   width=input_shapes["keypoint_heatmap_shape"].width)
+            self.jersey_number_head = build_jersey_number_head(cfg, feat_shape)
+
         # these are used for digit classification/regression after we get the digit ROI
         self.digit_box_pooler = ROIPooler(
             output_size=pooler_resolution,
@@ -135,6 +143,8 @@ class PGROIHeads(BaseROIHeads):
         )
 
         self.digit_box_predictor = DigitOutputLayers(cfg, self.box_head.output_shape)
+
+
 
 
 
@@ -176,8 +186,14 @@ class PGROIHeads(BaseROIHeads):
             kpts_features = None
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
         center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_neck(kpts_features, person_features)
+        if self.enable_jersey_number_det:
+            num_digits_logits = self.jersey_number_head(center_heatmaps)
+        else:
+            num_digits_logits = None
         if self.training:
-            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps, instances,
+            loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps,
+                                num_digits_logits,
+                                instances,
                                 size_target_type=self.size_target_type,
                                 size_target_scale=self.size_target_scale,
                                 output_head_weights=self.out_head_weights)
@@ -210,8 +226,11 @@ class PGROIHeads(BaseROIHeads):
                                      training=False,
                                      offset = self.offset_test
             )
-            detection_boxes = list(detection[..., :4].split([len(instance) for instance in instances]))
-            detection_ct_classes = list(detection[..., -1].split([len(instance) for instance in instances]))
+            num_instances = [len(instance) for instance in instances]
+            detection_boxes = list(detection[..., :4].split(num_instances))
+            detection_ct_classes = list(detection[..., -1].split(num_instances))
+            if self.enable_jersey_number_det:
+                pred_num_digits_scores = F.softmax(num_digits_logits, -1).split(num_instances)
             # assign new fields to instances
             for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
                 # perform a person roi clip
@@ -219,6 +238,8 @@ class PGROIHeads(BaseROIHeads):
                 pred_person_boxes = instances[i].pred_boxes # [N, 4]
                 boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[i])] for i, boxes_per_ins in enumerate(boxes)]
                 instances[i].proposal_digit_boxes = boxes
+                if self.enable_jersey_number_det:
+                    instances[i].pred_num_digits_scores = pred_num_digits_scores[i]
                 # instances[i].proposal_digit_ct_classes = [c for c in detection_ct_cls]
             return instances
 
@@ -384,6 +405,7 @@ def pg_rcnn_loss(
         pred_keypoint_logits,
         pred_scale_logits,
         pred_offset_logits,
+        num_digits_logits,
         instances,
         normalizer=None,
         output_head_weights=(1,0, 1.0, 1.0),
@@ -409,6 +431,7 @@ def pg_rcnn_loss(
     Returns a scalar tensor containing the loss.
     """
     has_offset_reg = pred_offset_logits is not None
+    has_num_digits_logits = num_digits_logits is not None
     heatmaps = []
     valid = []
     scale_targets = []
@@ -436,6 +459,8 @@ def pg_rcnn_loss(
                 'wh_loss': pred_scale_logits.sum() * 0}
         if has_offset_reg:
             loss.update({"os_loss": pred_offset_logits.sum() * 0})
+        if has_num_digits_logits:
+            loss.update({"num_digit_cls_loss": num_digits_logits.sum() * 0})
         return loss
 
 
@@ -479,5 +504,10 @@ def pg_rcnn_loss(
         pred_offset_logits = pred_offset_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
         os_loss = output_head_weights[2] * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
         loss.update({"os_loss": os_loss})
+
+    if has_num_digits_logits:
+        gt_num_digits = torch.bincount(valid[:, 0], minlength=keypoint_targets.shape[0])
+        num_digit_cls_loss = cross_entropy(num_digits_logits, gt_num_digits)
+        loss.update({"num_digit_cls_loss": num_digit_cls_loss})
 
     return loss

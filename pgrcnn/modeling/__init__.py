@@ -18,6 +18,8 @@ from .digit_neck_branches import (
     KptsAttentionBranch,
 )
 
+from .jersey_number_head import build_jersey_number_head
+
 from .meta_arch import pgrcnn
 from .utils import compute_targets
 

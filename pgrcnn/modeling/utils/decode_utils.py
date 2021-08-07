@@ -3,7 +3,7 @@ from typing import Any, List, Tuple, Union
 import torch
 import torch.nn.functional as F
 
-def get_local_maximum(heat, kernel=1):
+def get_local_maximum(heat, kernel=3):
     """Extract local maximum pixel with given kernal.
 
     Args:
@@ -231,7 +231,8 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100,
             h1_ratio = torch.normal(0.13, 0.03, (batch, K - num_fg, 1), device=roi_scale.device)
             w1_ratio = torch.normal(0.17, 0.05, (batch, K - num_fg, 1), device=roi_scale.device)
             scale_ratios = torch.cat([w1_ratio, h1_ratio], dim=2)
-        wh[:, num_fg:, ...] += scale_ratios * roi_scale
+        # += (add random number) or = (replace with random boxes)
+        wh[:, num_fg:, ...] = scale_ratios * roi_scale
 
     clses = clses.view(batch, K, 1).float()
     scores = scores.view(batch, K, 1)

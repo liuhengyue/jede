@@ -1,0 +1,17 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  ROI_DIGIT_NECK:
+    USE_PERSON_BOX_FEATURES: True
+    USE_KEYPOINTS_FEATURES: False
+    FUSION_TYPE: "" # "cat"
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: ""
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+    KEYPOINTS_BRANCH:
+      NAME: "" # "KptsROIBranch"
+      UP_SCALE: 2
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_personfeatureonly

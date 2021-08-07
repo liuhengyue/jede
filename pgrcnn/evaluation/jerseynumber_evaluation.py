@@ -9,7 +9,7 @@ import numpy as np
 import os
 import datetime
 import pickle
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import pycocotools.mask as mask_util
 import torch
 from fvcore.common.file_io import PathManager
@@ -28,6 +28,9 @@ from detectron2.structures import BoxMode, PolygonMasks, Boxes
 from detectron2.evaluation.evaluator import DatasetEvaluator
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.evaluation.coco_evaluation import COCOEvaluator
+
+from .jerseynumber_eval import JerseyNumberEval
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +88,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
         # determine pg rcnn or other models
         digit_gt_only = True
         # determine the eval type
-        person_only = (task_type in ["person_bbox", "keypoints"])
+        person_only = (task_type in ["jersey_number", "person_bbox", "keypoints"])
 
         # hack COCO object
         coco_gt_copy = copy.deepcopy(coco_gt)
@@ -133,6 +136,46 @@ class JerseyNumberEvaluator(COCOEvaluator):
                     i_to_keep.append(i)
             coco_gt_copy.imgToAnns[k] = [coco_gt_copy.imgToAnns[k][i] for i in i_to_keep]
 
+
+        if task_type == "jersey_number":
+            # add double-digit number cats
+            modified_cats = copy.deepcopy(coco_gt.cats)
+            name_to_id = {v['name']: v['id'] for v in coco_gt.cats.values()}
+            for cat_id_i, k_i in coco_gt.cats.items():
+                for cat_id_j, k_j in coco_gt.cats.items():
+                    if cat_id_i != 0 and cat_id_j !=0:
+                        new_id = int(str(name_to_id[k_i['name']]) + str(name_to_id[k_j['name']]))
+                        new_name = k_i['name'] + k_j['name']
+                        modified_cats.update({new_id: {'id': new_id, 'name':new_name}})
+            coco_gt_copy.cats = modified_cats
+            # modify dataset categories
+            coco_gt_copy.dataset["categories"] = list(modified_cats.values())
+            new_catToImgs = defaultdict(list)
+            # add ignore flags for those person boxes without jersey number
+            for k, v in coco_gt_copy.anns.items():
+                jersey_number = coco_gt_copy.anns[k]["jersey_number"]
+                if len(jersey_number) > 0:
+                    jersey_id = int(''.join([str(jn) for jn in jersey_number]))
+                    coco_gt_copy.anns[k]["ignore"] = 0
+                    coco_gt_copy.anns[k]["category_id"] = jersey_id
+                    new_catToImgs[jersey_id].append(coco_gt_copy.anns[k]["image_id"])
+                else:
+                    coco_gt_copy.anns[k]["ignore"] = 1
+                    new_catToImgs[person_id].append(coco_gt_copy.anns[k]["image_id"])
+            coco_gt_copy.catToImgs = new_catToImgs
+            # modify detections
+            modified_coco_results = []
+            for i, coco_result in enumerate(coco_results):
+                if coco_result["category_id"] == person_id:
+                    jersey_number = coco_result["jersey_number"]
+                    if len(jersey_number) > 0:
+                        cat_id = int(''.join([str(jn) for jn in jersey_number]))
+                        if cat_id in modified_cats:
+                            coco_result["category_id"] = cat_id
+                    # coco_result["category_id"] = 1
+                    modified_coco_results.append(coco_result)
+            return coco_gt_copy, modified_coco_results
+
         if person_only:
             return coco_gt_copy, [coco_result for coco_result in coco_results if
                                   coco_result["category_id"] == person_id]
@@ -151,7 +194,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
         # faster rcnn: digit_bbox
         # pg rcnn iou_type options: [digit_bbox, person_bbox, keypoints]
         task_type = iou_type
-        iou_type = 'bbox' if 'bbox' in iou_type else iou_type
+        # iou_type = iou_type if iou_type == "keypoints" else "bbox"
 
         if iou_type == "segm":
             coco_results = copy.deepcopy(coco_results)
@@ -161,12 +204,13 @@ class JerseyNumberEvaluator(COCOEvaluator):
             # We remove the bbox field to let mask AP use mask area.
             for c in coco_results:
                 c.pop("bbox", None)
-
+        # we will modify the coco results
+        coco_results = copy.deepcopy(coco_results)
         # filter results based on task_type
         coco_gt, coco_results = self._filter_coco_results(coco_gt, coco_results, task_type)
 
         coco_dt = coco_gt.loadRes(coco_results)
-        coco_eval = COCOeval(coco_gt, coco_dt, iou_type)
+        coco_eval = JerseyNumberEval(coco_gt, coco_dt, iou_type)
         # Use the COCO default keypoint OKS sigmas unless overrides are specified
         if kpt_oks_sigmas:
             coco_eval.params.kpt_oks_sigmas = np.array(kpt_oks_sigmas)
@@ -185,6 +229,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
         coco_eval.summarize()
 
         return coco_eval
+
 
     def _eval_predictions(self, tasks, predictions):
         """
@@ -228,9 +273,10 @@ class JerseyNumberEvaluator(COCOEvaluator):
                 if len(coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
-
+            class_names = [v['name'] for v in coco_eval.cocoGt.cats.values()] \
+                if task == "jersey_number" else self._metadata.get("thing_classes")
             res = self._derive_coco_results(
-                coco_eval, task, class_names=self._metadata.get("thing_classes")
+                coco_eval, task, class_names=class_names
             )
             self._results[task] = res
 
@@ -253,6 +299,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
             "person_bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
             "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
             "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
+            "jersey_number": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"]
         }[iou_type]
 
         if coco_eval is None:
@@ -339,7 +386,8 @@ class JerseyNumberEvaluator(COCOEvaluator):
         if cfg.MODEL.MASK_ON:
             tasks = tasks + ("segm",)
         if cfg.MODEL.KEYPOINT_ON:
-            tasks = tasks + ("person_bbox", "keypoints")
+            # tasks = tasks + ("person_bbox", "keypoints")
+            tasks = tasks + ("jersey_number", "person_bbox", "keypoints")
         return tasks
 
     def process(self, inputs, outputs):
@@ -495,6 +543,8 @@ def convert_to_coco_dict(dataset_name):
                 coco_annotation["area"] = area
                 coco_annotation["category_id"] = annotation["category_id"]
                 coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+                # add jersey number List[int]
+                coco_annotation["jersey_number"] = annotation["digit_ids"]
 
                 coco_annotations.append(coco_annotation)
 
@@ -571,7 +621,7 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
                 "score": scores[k],
             }
             results.append(result)
-        return  results
+        return results
 
     # convert digit related fields
     digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
@@ -599,7 +649,9 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
     has_keypoints = instances.has("pred_keypoints")
     if has_keypoints:
         keypoints = instances.pred_keypoints
-
+    # add jersey number recognitions
+    jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_jersey_numbers] \
+        if instances.has("pred_jersey_numbers") else [[] for _ in range(num_instance)]
     results = []
     for k in range(num_instance):
         result = {
@@ -608,14 +660,16 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
             "bbox": boxes[k],
             "score": scores[k],
         }
-        if has_keypoints and k < num_person_instance:
-            # In COCO annotations,
-            # keypoints coordinates are pixel indices.
-            # However our predictions are floating point coordinates.
-            # Therefore we subtract 0.5 to be consistent with the annotation format.
-            # This is the inverse of data loading logic in `datasets/coco.py`.
-            keypoints[k][:, :2] -= 0.5
-            result["keypoints"] = keypoints[k].flatten().tolist()
+        if k < num_person_instance:
+            result["jersey_number"] = jersey_numbers[k]
+            if has_keypoints:
+                # In COCO annotations,
+                # keypoints coordinates are pixel indices.
+                # However our predictions are floating point coordinates.
+                # Therefore we subtract 0.5 to be consistent with the annotation format.
+                # This is the inverse of data loading logic in `datasets/coco.py`.
+                keypoints[k][:, :2] -= 0.5
+                result["keypoints"] = keypoints[k].flatten().tolist()
         if k >= num_person_instance:
             # add a field for matching the digit to its person
             result["match_id"] = digit_box_instance_inds[k-num_person_instance]

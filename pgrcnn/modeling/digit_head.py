@@ -73,7 +73,7 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="pg_rcnn"):
         storage.put_scalar(f"{prefix}/digit_fg_cls_accuracy", fg_num_accurate / num_fg)
         storage.put_scalar(f"{prefix}/digit_false_negative", num_false_negative / num_fg)
 
-def fast_rcnn_inference(boxes, scores, num_instances, image_shapes, score_thresh, nms_thresh, topk_per_image):
+def fast_rcnn_inference(boxes, scores, num_digits_scores, num_instances, image_shapes, score_thresh, nms_thresh, topk_per_image):
     """
     Call `fast_rcnn_inference_single_image` for all images.
 
@@ -103,17 +103,17 @@ def fast_rcnn_inference(boxes, scores, num_instances, image_shapes, score_thresh
     """
     result_per_image = [
         fast_rcnn_inference_single_image(
-            boxes_per_image, scores_per_image, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image
+            boxes_per_image, scores_per_image, num_digits_scores_per_image, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image
         )
-        for scores_per_image, boxes_per_image, num_instance, image_shape in \
-        zip(scores, boxes, num_instances, image_shapes)
+        for scores_per_image, boxes_per_image, num_digits_scores_per_image, num_instance, image_shape in \
+        zip(scores, boxes, num_digits_scores, num_instances, image_shapes)
     ]
     return [x[0] for x in result_per_image], [x[1] for x in result_per_image]
 
 
 def fast_rcnn_inference_single_image(
-    boxes, scores, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
-    per_class_nms=True
+    boxes, scores, num_digits_scores, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
+    per_class_nms=True, number_score_thresh=0.5
 ):
     """
     Single-image inference. Return bounding-box detection results by thresholding
@@ -122,10 +122,12 @@ def fast_rcnn_inference_single_image(
     Args:
         Same as `fast_rcnn_inference`, but with boxes, scores, and image shapes
         per image.
+        nms_method (int): 0 (default, nms all boxes, 1 nms per instance)
 
     Returns:
         Same as `fast_rcnn_inference`, but for only one image.
     """
+    N = len(num_instance) # the number of detected players
     valid_mask = torch.isfinite(boxes).all(dim=1) & torch.isfinite(scores).all(dim=1)
     if not valid_mask.all():
         boxes = boxes[valid_mask]
@@ -144,11 +146,9 @@ def fast_rcnn_inference_single_image(
     # Second column contains indices of classes in terms of 0 - 9 class id.
     filter_inds = filter_mask.nonzero()
     # find the indices of each digit bbox in each person instance
-    instance_idx = torch.as_tensor([x for i, num_digits in enumerate(num_instance) for x in [i] * num_digits], dtype=torch.long, device=scores.device)
-    # if num_instance:
-    #     instance_idx = filter_mask.view(num_instance, -1, num_bbox_reg_classes).nonzero()[:, 0]
-    # else:
-    #     instance_idx = torch.zeros(0, device=filter_mask.device, dtype=torch.long)
+    instance_idx = torch.as_tensor([x for i, num_digits in enumerate(num_instance) for x in [i] * num_digits],
+                                   dtype=torch.long, device=scores.device)
+
     if num_bbox_reg_classes == 1:
         boxes = boxes[filter_inds[:, 0], 0]
     else:
@@ -157,35 +157,74 @@ def fast_rcnn_inference_single_image(
     instance_idx = instance_idx[filter_inds[:, 0]]
     # Apply per-class NMS
     cls_ids = filter_inds[:, 1] if per_class_nms else torch.zeros_like(filter_inds[:, 1])
+    nms_method = nms_per_image # nms_per_player
+    boxes, scores, cls_ids = nms_method(boxes, scores, cls_ids, instance_idx, N, nms_thresh, topk_per_image)
+
+    boxes, scores, cls_ids, number_preds, number_scores = jersey_number_inference(boxes, scores, cls_ids, number_score_thresh)
+    # assign fields for players
+    result = Players(image_shape)
+    result.pred_digit_boxes = boxes
+    result.digit_scores = scores
+    result.pred_digit_classes = cls_ids
+    result.pred_jersey_numbers = number_preds
+    result.pred_jersey_numbers_scores = number_scores
+
+
+    return result, filter_inds[:, 0]
+
+def nms_per_image(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image):
     keep = batched_nms(boxes, scores, cls_ids, nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
     # recover digit class ids by adding one
-    boxes, scores, pred_digit_classes = boxes[keep], scores[keep], filter_inds[keep][:, 1] + 1
-    instance_idx = instance_idx[keep]
-    instance_idx, sorted_inds = torch.sort(instance_idx)
-    boxes, scores, pred_digit_classes = boxes[sorted_inds], scores[sorted_inds], pred_digit_classes[sorted_inds]
+    boxes, scores, cls_ids = boxes[keep], scores[keep], cls_ids[keep] + 1
+    instance_inds = instance_inds[keep]
+    instance_inds, sorted_inds = torch.sort(instance_inds)
+    boxes, scores, cls_ids = boxes[sorted_inds], scores[sorted_inds], cls_ids[sorted_inds]
     # count number of digit object for each instance
-    counts = torch.bincount(instance_idx, minlength=len(num_instance)).tolist()
+    counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
     boxes = torch.split(boxes, counts)
-    scores = torch.split(scores, counts)
-    pred_digit_classes = torch.split(pred_digit_classes, counts)
-    result = Players(image_shape)
-
     boxes = [Boxes(x) for x in boxes]
+    scores = torch.split(scores, counts)
+    cls_ids = torch.split(cls_ids, counts)
+    return boxes, scores, cls_ids
+
+def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image):
+    topk_per_instance = topk_per_image // num_instances
+    # assign each box to its player first, then nms
+    counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
+    boxes = list(torch.split(boxes, counts))
+    scores = list(torch.split(scores, counts))
+    cls_ids = list(torch.split(cls_ids, counts))
+    keeps = [batched_nms(boxes_per_instance, scores_per_instance, cls_ids_per_instance, nms_thresh)
+             for boxes_per_instance, scores_per_instance, cls_ids_per_instance in zip(boxes, scores, cls_ids)]
+    if topk_per_instance >= 0:
+        keeps = [keep[:topk_per_instance] for keep in keeps]
+    for i, (keep, box, score, cls_id) in enumerate(zip(keeps, boxes, scores, cls_ids)):
+        boxes[i] = box[keep]
+        scores[i] = score[keep]
+        # recover digit class ids by adding one
+        cls_ids[i] = cls_id[keep] + 1
+    boxes = [Boxes(x) for x in boxes]
+    return boxes, scores, cls_ids
+
+def jersey_number_inference(boxes, scores, cls_ids, number_score_thresh):
     xs = [x.get_centers()[:, 0] for x in boxes]
     # sort the digit box location left -> right
     sorted_inds = [torch.sort(x)[1] for x in xs]
     boxes = [bbox[inds] for bbox, inds in zip(boxes, sorted_inds)]
     scores = [score[inds] for score, inds in zip(scores, sorted_inds)]
-    pred_digit_classes = [pred_digit_cls[inds] for pred_digit_cls, inds in zip(pred_digit_classes, sorted_inds)]
+    cls_ids = [pred_digit_cls[inds] for pred_digit_cls, inds in zip(cls_ids, sorted_inds)]
     # these fields should have length len(num_instance)
-    result.pred_digit_boxes = boxes
-    result.digit_scores = scores
-    result.pred_digit_classes = pred_digit_classes
-    # todo: maybe better way to get the number
-    result.pred_jersey_numbers =  [pred_digit_cls[[0, -1]] if pred_digit_cls.numel() else pred_digit_cls for pred_digit_cls in pred_digit_classes]
-    return result, filter_inds[:, 0]
+
+    # # get the jersey number todo: maybe better way to get the number
+    keep_for_number = [torch.nonzero(s > number_score_thresh, as_tuple=True)[0] for s in scores]
+    # only get the first and last
+    keep_for_number = [inds[[0, -1]] if inds.numel() > 1 else inds for inds in keep_for_number]
+    number_scores = [s[keep].mean() for keep, s in zip(keep_for_number, scores)]
+    number_preds = [pred[keep] for keep, pred in zip(keep_for_number, cls_ids)]
+
+    return boxes, scores, cls_ids, number_preds, number_scores
 
 
 class DigitOutputLayers(nn.Module):
@@ -399,9 +438,11 @@ class DigitOutputLayers(nn.Module):
         scores = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
         num_instances = [[len(p_digit_boxes) for p_digit_boxes in p.get("proposal_digit_boxes")] for p in proposals]
+        num_digits_scores = [p.get("pred_num_digits_scores") if p.has("pred_num_digits_scores") else None for p in proposals]
         detections, kept_idx = fast_rcnn_inference(
             boxes,
             scores,
+            num_digits_scores,
             num_instances,
             image_shapes,
             self.test_score_thresh,
@@ -409,11 +450,10 @@ class DigitOutputLayers(nn.Module):
             self.test_topk_per_image
         )
         # merge detection results
-        for i, detection in enumerate(detections):
-            proposals[i].pred_digit_boxes = detection.pred_digit_boxes
-            proposals[i].digit_scores = detection.digit_scores
-            proposals[i].pred_digit_classes = detection.pred_digit_classes
-            proposals[i].remove('proposal_digit_boxes')
+        for proposal, detection in zip(proposals, detections):
+            for k, v in detection.get_fields().items():
+                proposal.set(k, v)
+            proposal.remove('proposal_digit_boxes')
         return proposals, kept_idx
 
     def predict_boxes_for_gt_classes(self, predictions, proposals):

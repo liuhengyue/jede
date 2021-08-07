@@ -1,17 +1,25 @@
 _BASE_: "../pg_rcnn_base.yaml"
 MODEL:
+  ROI_JERSEY_NUMBER_DET:
+    NAME: "NumDigitClassification"
   ROI_DIGIT_NECK:
-    FUSION_TYPE: "cat"
+    USE_PERSON_BOX_FEATURES: True
+    USE_KEYPOINTS_FEATURES: True
+    FUSION_TYPE: "multiply" # cat sum multiply
     NORM: "GN"
-    OUTPUT_HEAD_CHANNELS: (1, 4, 2)
-    SIZE_TARGET_TYPE: "ltrb"
+    OUTPUT_HEAD_CHANNELS: (1, 2, 2)
+    SIZE_TARGET_TYPE: "wh"
     NUM_PROPOSAL_TRAIN: 100
-#    OUTPUT_HEAD_WEIGHTS: (1.0, 1.0, 1.0)
   ROI_DIGIT_NECK_BRANCHES:
     NORM: "GN"
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+      UP_SCALE: 1
+      DECONV_KERNEL: 4
     KEYPOINTS_BRANCH:
-      NAME: ""
-      UP_SCALE: 2
+      NAME: "KptsAttentionBranch" # "KptsROIBranch"
+      DECONV_KERNEL: 4
+      UP_SCALE: 1
 DATASETS:
   NUM_IMAGES: 1 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]

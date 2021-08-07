@@ -57,14 +57,19 @@ class DigitNeck(nn.Module):
         # activations = {name: activation for name, activation in
         #                zip(self.output_head_names, (torch.sigmoid, None, None))}
         cfg_roi_digit_neck_branches = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES
-        module = build_digit_neck_branch(cfg_roi_digit_neck_branches.PERSON_BRANCH.NAME, cfg, input_shapes["person_box_features_shape"])
-        if module:
+        self.use_person_features = cfg_roi_digit_neck.USE_PERSON_BOX_FEATURES
+        self.use_kpts_features = cfg_roi_digit_neck.USE_KEYPOINTS_FEATURES
+
+        if self.use_person_features:
+            module = build_digit_neck_branch(cfg_roi_digit_neck_branches.PERSON_BRANCH.NAME, cfg,
+                                             input_shapes["person_box_features_shape"])
             self.add_module("person_branch", module)
-        module = build_digit_neck_branch(cfg_roi_digit_neck_branches.KEYPOINTS_BRANCH.NAME, cfg, input_shapes["keypoint_heatmap_shape"])
-        if module:
+
+        if self.use_kpts_features:
+            module = build_digit_neck_branch(cfg_roi_digit_neck_branches.KEYPOINTS_BRANCH.NAME, cfg,
+                                             input_shapes["keypoint_heatmap_shape"])
             self.add_module("kpts_branch", module)
-        self.use_person_features = hasattr(self, "person_branch")
-        self.use_kpts_features = hasattr(self, "kpts_branch")
+
         self.fusion_type = cfg_roi_digit_neck.FUSION_TYPE
 
         keypoint_heatmap_shape = input_shapes["keypoint_heatmap_shape"]
@@ -80,6 +85,19 @@ class DigitNeck(nn.Module):
         elif self.fusion_type == "sum":
             assert person_box_features_shape == keypoint_heatmap_shape
             in_channels = keypoint_heatmap_shape.channels
+        elif self.fusion_type == "multiply":
+            assert person_box_features_shape == keypoint_heatmap_shape
+            in_channels = keypoint_heatmap_shape.channels
+        else: # only single branch
+            if self.use_person_features and (not self.use_kpts_features):
+                assert person_box_features_shape.height == keypoint_heatmap_shape.height
+                assert person_box_features_shape.width == keypoint_heatmap_shape.width
+                in_channels = person_box_features_shape.channels
+            elif (not self.use_person_features) and self.use_kpts_features:
+                in_channels = keypoint_heatmap_shape.channels
+            else:
+                raise NotImplementedError("Wrong combinations of FUSION_TYPE / USE_KEYPOINTS_FEATURES / USE_PERSON_BOX_FEATURES.")
+
         for name, out_channels in zip(self.output_head_names, self.output_head_channels):
             activation = activations[name]
             module = self._init_output_layers(conv_dims, in_channels, out_channels, activation=activation)
@@ -163,21 +181,22 @@ class DigitNeck(nn.Module):
             person_features = self.person_branch(person_features)
         # merge the features
         if self.fusion_type == "cat":
-            kpts_features = torch.cat((kpts_features, person_features), dim=1)
+            x = torch.cat((kpts_features, person_features), dim=1)
         elif self.fusion_type == "sum":
-            kpts_features = torch.add(kpts_features, person_features)
-        #  kpts_features will be feed into two heads
-        x = kpts_features
-        y = kpts_features
-        x = self.center(x)
-        y = self.size(y)
-        if self.offset_reg:
-            z = kpts_features
-            z = self.offset(z)
+            x = torch.add(kpts_features, person_features)
+        elif self.fusion_type == "multiply":
+            x = kpts_features * person_features
         else:
-            z = None
+            x = kpts_features if self.use_kpts_features else person_features
+        #  x will be feed into different prediction heads
+        pred_center_heatmaps = self.center(x)
+        pred_scale_heatmaps = self.size(x)
+        if self.offset_reg:
+            pred_offset_heatmaps = self.offset(x)
+        else:
+            pred_offset_heatmaps = None
         # center, size, offset heatmaps
-        return [x, y, z]
+        return [pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps]
 
 
 def build_digit_neck(cfg, input_shapes):
