@@ -160,14 +160,16 @@ def fast_rcnn_inference_single_image(
     nms_method = nms_per_image # nms_per_player
     boxes, scores, cls_ids = nms_method(boxes, scores, cls_ids, instance_idx, N, nms_thresh, topk_per_image)
 
-    boxes, scores, cls_ids, number_preds, number_scores = jersey_number_inference(boxes, scores, cls_ids, number_score_thresh)
+    # boxes, scores, cls_ids, number_preds, number_scores = jersey_number_inference(boxes, scores, cls_ids, number_score_thresh)
     # assign fields for players
     result = Players(image_shape)
     result.pred_digit_boxes = boxes
     result.digit_scores = scores
     result.pred_digit_classes = cls_ids
-    result.pred_jersey_numbers = number_preds
-    result.pred_jersey_numbers_scores = number_scores
+    result.proposal_number_boxes = [b[s > number_score_thresh].union()
+                                    for b, s in zip(boxes, scores)]
+    # result.pred_jersey_numbers = number_preds
+    # result.pred_jersey_numbers_scores = number_scores
 
 
     return result, filter_inds[:, 0]
@@ -185,8 +187,8 @@ def nms_per_image(boxes, scores, cls_ids, instance_inds, num_instances, nms_thre
     counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
     boxes = torch.split(boxes, counts)
     boxes = [Boxes(x) for x in boxes]
-    scores = torch.split(scores, counts)
-    cls_ids = torch.split(cls_ids, counts)
+    scores = list(torch.split(scores, counts))
+    cls_ids = list(torch.split(cls_ids, counts))
     return boxes, scores, cls_ids
 
 def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image):

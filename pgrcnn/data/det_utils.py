@@ -132,7 +132,8 @@ def transform_instance_annotations(
 
 def annotations_to_instances(annos,
                              image_size,
-                             digit_only=False
+                             digit_only=False,
+                             seq_max_length=3
                              ):
     """
     Create an :class:`Instances` object used by the models,
@@ -210,13 +211,23 @@ def annotations_to_instances(annos,
         # add centers and scales
         target.gt_digit_centers = [box.get_centers() for box in boxes]
         target.gt_digit_scales = [box.get_scales() for box in boxes]
+        # we then add instance-level jersey number box and cls
+        target.gt_number_boxes = [box.union() for box in boxes] # there could be empty box
+        # target.gt_number_classes = classes
+        # create sequence with zero paddings
+        gt_lengths = torch.as_tensor([x.numel() for x in classes], dtype=torch.long)
+        N = gt_lengths.numel()
+        gt_seq = torch.zeros((N, seq_max_length), dtype=torch.long)
+        for i in range(N):
+            gt_seq[i, :gt_lengths[i]] = classes[i]
+        target.gt_number_lengths = gt_lengths
+        target.gt_number_sequences = gt_seq
 
     # not every instance has the keypoints annotation, so we pad it
     if "keypoints" in annos[0]:
         kpts = [obj.get("keypoints") for obj in annos]
         target.gt_keypoints = Keypoints(kpts)
     return target
-
 
 
 def filter_empty_instances(instances, box_threshold=1e-5):

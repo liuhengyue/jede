@@ -9,5 +9,7 @@
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_bn.yaml
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_ltrb.yaml
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_ltrb_gn_pretrain_copypastemix.yaml
-python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_kptsfeatureonly.yaml --resume
-python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_attn.yaml
+#python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_kptsfeatureonly.yaml --resume
+#python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_attn.yaml
+python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_attn_28x28_cat.yaml --resume
+python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_person_kpts_28x28_cat.yaml

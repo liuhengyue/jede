@@ -21,6 +21,21 @@ class Boxes(detectron_boxes):
         self.tensor = output[..., :4]
         return output[..., 4].long()
 
+    def union(self):
+        '''
+
+        Returns: get the union box of boxes.
+
+        '''
+        if not self.tensor.numel():
+            return self
+        x1 = torch.min(self.tensor[..., 0])
+        y1 = torch.min(self.tensor[..., 1])
+        x2 = torch.max(self.tensor[..., 2])
+        y2 = torch.max(self.tensor[..., 3])
+        box = torch.as_tensor([[x1, y1, x2, y2]])
+        return Boxes(box).to(self.tensor.device)
+
     def __getitem__(self, item) -> "Boxes":
         """
         Args:

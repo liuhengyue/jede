@@ -35,8 +35,6 @@ class PGROIHeads(BaseROIHeads):
         self.num_digit_classes = cfg.MODEL.ROI_DIGIT_NECK.NUM_DIGIT_CLASSES
         self.use_person_box_features = cfg.MODEL.ROI_DIGIT_NECK.USE_PERSON_BOX_FEATURES
         self.use_kpts_features = cfg.MODEL.ROI_DIGIT_NECK.USE_KEYPOINTS_FEATURES
-        self.num_proposal_train = cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN
-        self.num_proposal_test = cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST
         self.num_interests = cfg.DATASETS.NUM_INTERESTS
         self.batch_digit_size_per_image = cfg.MODEL.ROI_DIGIT_NECK.BATCH_DIGIT_SIZE_PER_IMAGE
         self.offset_test = cfg.MODEL.ROI_HEADS.OFFSET_TEST
@@ -45,6 +43,9 @@ class PGROIHeads(BaseROIHeads):
         self.out_head_weights = cfg.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_WEIGHTS
         self.enable_jersey_number_det = cfg.MODEL.ROI_JERSEY_NUMBER_DET.NAME is not None
         self._init_digit_head(cfg, input_shape)
+        # add classification of number of jersey number
+        if self.enable_jersey_number_det:
+            self._init_number_head(cfg, input_shape)
 
 
 
@@ -123,13 +124,6 @@ class PGROIHeads(BaseROIHeads):
                 cfg, input_shapes
             )
 
-        # add classification of number of jersey number
-        if self.enable_jersey_number_det:
-            feat_shape = ShapeSpec(channels=self.digit_neck.output_head_channels[0],
-                                   height=input_shapes["keypoint_heatmap_shape"].height,
-                                   width=input_shapes["keypoint_heatmap_shape"].width)
-            self.jersey_number_head = build_jersey_number_head(cfg, feat_shape)
-
         # these are used for digit classification/regression after we get the digit ROI
         self.digit_box_pooler = ROIPooler(
             output_size=pooler_resolution,
@@ -145,6 +139,38 @@ class PGROIHeads(BaseROIHeads):
         self.digit_box_predictor = DigitOutputLayers(cfg, self.box_head.output_shape)
 
 
+    def _init_number_head(self, cfg, input_shape):
+        """
+        After the feature pooling, each ROI feature is fed into
+        a cls head, bbox reg head and kpts head
+        """
+        # fmt: off
+        pooler_resolution = cfg.MODEL.ROI_JERSEY_NUMBER_DET.NUMBER_POOLER_RESOLUTION
+        pooler_scales = tuple(1.0 / input_shape[k].stride for k in self.in_features)
+        sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type = cfg.MODEL.ROI_BOX_HEAD.POOLER_TYPE
+        # self.train_on_pred_boxes = cfg.MODEL.ROI_BOX_HEAD.TRAIN_ON_PRED_BOXES
+        # fmt: on
+        # If StandardROIHeads is applied on multiple feature maps (as in FPN),
+        # then we share the same predictors and therefore the channel counts must be the same
+        in_channels = [input_shape[f].channels for f in self.in_features]
+        # Check all channel counts are equal
+        assert len(set(in_channels)) == 1, in_channels
+        in_channels = in_channels[0]
+
+
+        # these are used for digit classification/regression after we get the digit ROI
+        self.number_box_pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+
+        feat_shape = ShapeSpec(channels=in_channels,
+                               height=pooler_resolution[0],
+                               width=pooler_resolution[1])
+        self.jersey_number_head = build_jersey_number_head(cfg, feat_shape)
 
 
 
@@ -186,10 +212,11 @@ class PGROIHeads(BaseROIHeads):
             kpts_features = None
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
         center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_neck(kpts_features, person_features)
-        if self.enable_jersey_number_det:
-            num_digits_logits = self.jersey_number_head(center_heatmaps)
-        else:
-            num_digits_logits = None
+        # if self.enable_jersey_number_det:
+        #     num_digits_logits = self.jersey_number_head(center_heatmaps)
+        # else:
+        #     num_digits_logits = None
+        num_digits_logits = None
         if self.training:
             loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps,
                                 num_digits_logits,
@@ -205,6 +232,7 @@ class PGROIHeads(BaseROIHeads):
                 detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                           reg=offset_heatmaps,
                                           K=self.num_proposal_train,
+                                          fg_ratio=self.fg_ratio,
                                           size_target_type=self.size_target_type,
                                           size_target_scale=self.size_target_scale)
                 # deal with svhn since the instances will not contain proposal_boxes
@@ -229,8 +257,8 @@ class PGROIHeads(BaseROIHeads):
             num_instances = [len(instance) for instance in instances]
             detection_boxes = list(detection[..., :4].split(num_instances))
             detection_ct_classes = list(detection[..., -1].split(num_instances))
-            if self.enable_jersey_number_det:
-                pred_num_digits_scores = F.softmax(num_digits_logits, -1).split(num_instances)
+            # if self.enable_jersey_number_det:
+            #     pred_num_digits_scores = F.softmax(num_digits_logits, -1).split(num_instances)
             # assign new fields to instances
             for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
                 # perform a person roi clip
@@ -238,8 +266,8 @@ class PGROIHeads(BaseROIHeads):
                 pred_person_boxes = instances[i].pred_boxes # [N, 4]
                 boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[i])] for i, boxes_per_ins in enumerate(boxes)]
                 instances[i].proposal_digit_boxes = boxes
-                if self.enable_jersey_number_det:
-                    instances[i].pred_num_digits_scores = pred_num_digits_scores[i]
+                # if self.enable_jersey_number_det:
+                #     instances[i].pred_num_digits_scores = pred_num_digits_scores[i]
                 # instances[i].proposal_digit_ct_classes = [c for c in detection_ct_cls]
             return instances
 
@@ -264,6 +292,28 @@ class PGROIHeads(BaseROIHeads):
             return self.digit_box_predictor.losses(predictions, proposals)
         else:
             pred_instances, _ = self.digit_box_predictor.inference(predictions, proposals)
+            return pred_instances
+
+    def _forward_number_box(self, features, proposals):
+        features = [features[f] for f in self.in_features]
+        # most likely have empty boxes, Boxes.cat([]) will return Boxes on cpu
+        if self.training:
+            self.label_and_sample_jerseynumber_proposals(proposals)
+            detection_boxes = [Boxes.cat(x.proposal_number_boxes).to(features[0].device)
+                               if x.has('proposal_number_boxes') else Boxes.cat([]).to(features[0].device)
+                               for x in proposals]
+        else:
+            detection_boxes = [Boxes.cat(p.proposal_number_boxes) for p in proposals]
+            # detection_boxes = [Boxes.cat(p.pred_digit_boxes).union() for p in proposals]
+            # for number_boxes, p in zip(detection_boxes, proposals):
+            #     p.proposal_number_boxes = number_boxes
+        box_features = self.number_box_pooler(features, detection_boxes)
+        box_features = self.jersey_number_head(box_features)
+
+        if self.training:
+            return self.jersey_number_head.losses(box_features, proposals)
+        else:
+            pred_instances = self.jersey_number_head.inference(box_features, proposals)
             return pred_instances
 
 
@@ -294,6 +344,8 @@ class PGROIHeads(BaseROIHeads):
         instances = self._forward_keypoint(features, instances)
         instances = self._forward_pose_guided(features, instances)
         instances = self._forward_digit_box(features, instances)
+        if self.enable_jersey_number_det:
+            instances = self._forward_number_box(features, instances)
 
         return instances
 
@@ -324,6 +376,8 @@ class PGROIHeads(BaseROIHeads):
             losses.update(kpt_loss)
             losses.update(self._forward_pose_guided(features, sampled_instances))
             losses.update(self._forward_digit_box(features, sampled_instances))
+            if self.enable_jersey_number_det:
+                losses.update(self._forward_number_box(features, sampled_instances))
             return proposals, losses
         else:
             pred_instances = self._forward_box(features, proposals)
@@ -505,9 +559,9 @@ def pg_rcnn_loss(
         os_loss = output_head_weights[2] * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
         loss.update({"os_loss": os_loss})
 
-    if has_num_digits_logits:
-        gt_num_digits = torch.bincount(valid[:, 0], minlength=keypoint_targets.shape[0])
-        num_digit_cls_loss = cross_entropy(num_digits_logits, gt_num_digits)
-        loss.update({"num_digit_cls_loss": num_digit_cls_loss})
+    # if has_num_digits_logits:
+    #     gt_num_digits = torch.bincount(valid[:, 0], minlength=keypoint_targets.shape[0])
+    #     num_digit_cls_loss = cross_entropy(num_digits_logits, gt_num_digits)
+    #     loss.update({"num_digit_cls_loss": num_digit_cls_loss})
 
     return loss

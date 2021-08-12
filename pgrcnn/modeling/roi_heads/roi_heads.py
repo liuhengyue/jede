@@ -8,6 +8,7 @@ from torch import nn
 
 from detectron2.layers import ShapeSpec, nonzero_tuple
 from detectron2.structures import pairwise_iou
+from detectron2.structures.boxes import matched_boxlist_iou
 from detectron2.utils.events import get_event_storage
 from detectron2.config import configurable
 from detectron2.modeling.sampling import subsample_labels
@@ -16,7 +17,6 @@ from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY
 
 from pgrcnn.structures import Players, Boxes
 from pgrcnn.modeling.proposal_generator.proposal_utils import add_ground_truth_to_proposals
-from pgrcnn.modeling.digit_head import paired_iou
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +112,20 @@ class BaseROIHeads(StandardROIHeads):
 
     @configurable
     def __init__(self, *args, **kwargs):
+        self.fg_ratio = kwargs.pop("fg_ratio")
+        self.num_proposal_train = kwargs.pop("num_proposal_train")
+        self.num_proposal_test = kwargs.pop("num_proposal_test")
+        self.top_k_digits = int(self.fg_ratio * self.num_proposal_train)
         super().__init__(*args, **kwargs)
 
     @classmethod
     def from_config(cls, cfg, input_shape: Dict[str, ShapeSpec]):
         ret = super().from_config(cfg, input_shape)
+        ret.update({
+        "fg_ratio": cfg.MODEL.ROI_DIGIT_NECK.FG_RATIO,
+        "num_proposal_train": cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN,
+        "num_proposal_test": cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST,
+        })
         return ret
 
     @torch.no_grad()
@@ -288,14 +297,14 @@ class BaseROIHeads(StandardROIHeads):
             # shape of (N, K, 6) -> (N * K, 6)
             detection_per_image = detection_per_image.view(-1, detection_per_image.size(-1))
             boxes = detection_per_image[:, :4]
-            # detection_ct_scores = detection_per_image[:, 4]
+            detection_ct_scores = detection_per_image[:, 4]
             # detection_ct_classes = detection_per_image[:, 5].to(torch.int8)
             boxes = Boxes(boxes)
             # we have empty boxes at the beginning of the training
             keep = boxes.nonempty()
             boxes = boxes[keep]
             # detection_ct_classes = detection_ct_classes[keep]
-            # detection_ct_scores = detection_ct_scores[keep]
+            detection_ct_scores = detection_ct_scores[keep]
             # we clip by the image, probably clipping based on the person ROI works better?
             boxes.clip(targets_per_image.image_size)
             # now we match the digit boxes with detections
@@ -321,6 +330,7 @@ class BaseROIHeads(StandardROIHeads):
                 # the indices of which person each digit proposal is associated with
                 inds = inds[sampled_idxs]  # digit -> person
                 boxes = boxes[sampled_idxs]
+                detection_ct_scores = detection_ct_scores[sampled_idxs]
                 # detection_ct_classes = detection_ct_classes[sampled_idxs]
                 # get the reverse ids for person -> digit
                 reverse_inds = [torch.where(inds == i)[0] for i in range(N)]
@@ -328,10 +338,10 @@ class BaseROIHeads(StandardROIHeads):
                 targets_per_image.proposal_digit_boxes = [
                     boxes[i] for i in reverse_inds
                 ]
-                # store the corresponding digit center class
-                # targets_per_image.proposal_digit_ct_classes = [
-                #     detection_ct_classes[i] for i in reverse_inds
-                # ]
+                # store the corresponding digit center scores
+                targets_per_image.proposal_digit_scores = [
+                    detection_ct_scores[i] for i in reverse_inds
+                ]
                 # gt_digit_classes is returned by '_sample_digit_proposals'
                 targets_per_image.gt_digit_classes = [
                     gt_digit_classes[i] for i in reverse_inds]
@@ -347,6 +357,7 @@ class BaseROIHeads(StandardROIHeads):
                 targets_per_image.remove("gt_digit_classes")
                 device = detection_per_image.device
                 targets_per_image.proposal_digit_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.proposal_digit_scores = [torch.empty((0, ), device=device) for _ in range(N)]
                 # targets_per_image.proposal_digit_ct_classes = [torch.empty(0, device=device).long() for _ in range(N)]
                 # targets_per_image.gt_digit_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
                 # targets_per_image.gt_digit_classes = [torch.empty(0, device=device).long() for _ in range(N)]
@@ -356,6 +367,50 @@ class BaseROIHeads(StandardROIHeads):
         storage = get_event_storage()
         storage.put_scalar("pg_head/num_fg_digit_samples", np.mean(num_fg_samples) if len(num_fg_samples) else 0.)
         storage.put_scalar("pg_head/num_bg_digit_samples", np.mean(num_bg_samples) if len(num_bg_samples) else 0.)
+
+    @torch.no_grad()
+    def label_and_sample_jerseynumber_proposals(self,
+                                                targets: List[Players],
+                                                add_gt=True):
+        """
+        targets: list (Players): a list of instances.
+        """
+        for targets_per_image in targets: # image level
+            proposal_digit_boxes = targets_per_image.proposal_digit_boxes
+            # get the top k boxes based on cfg
+            # proposal_number_boxes = [b[:self.top_k_digits].union() for b in proposal_digit_boxes]
+            # or based on threshold
+            proposal_scores = targets_per_image.proposal_digit_scores
+            proposal_number_boxes = [b[s > 0.5].union() for b, s in zip(proposal_digit_boxes, proposal_scores)]
+            gt_number_boxes = targets_per_image.gt_number_boxes
+            device = targets_per_image.proposal_boxes.device
+            # gt_number_classes = targets_per_image.gt_number_classes.copy()
+            gt_number_sequences = targets_per_image.gt_number_sequences.clone()
+            gt_number_lengths = targets_per_image.gt_number_lengths.clone()
+            # we get empty tensor for empty boxes
+            valid = [len(b) > 0 and b.nonempty()[0].tolist() for b in proposal_number_boxes]
+            sampled_inds = [i for i, v in enumerate(valid) if v]
+            sampled_proposal_number_boxes = Boxes.cat([p for v, p in zip(valid, proposal_number_boxes) if v]).to(device)
+            sampled_gt_number_boxes = Boxes.cat([p for v, p in zip(valid, gt_number_boxes) if v]).to(device)
+            # perform matching [N,] scores of matching
+            match_quality_matrix = matched_boxlist_iou(sampled_gt_number_boxes, sampled_proposal_number_boxes)
+            # only set empty boxes or boxes of iou < 0.7 be negative
+            neg_inds = [i for i in range(len(valid)) if ( (not valid[i]) or match_quality_matrix[sampled_inds.index(i)] < 0.7 )]
+            # set negative to empty
+            for neg_ind in neg_inds:
+                gt_number_lengths[neg_ind] = 0
+                # gt_number_classes[neg_ind] = torch.empty((0,), dtype=torch.long, device=match_quality_matrix.device)
+                proposal_number_boxes[neg_ind] = Boxes([]).to(match_quality_matrix.device)
+            if add_gt:
+                proposal_number_boxes = [ Boxes.cat((gt_b, p_b)) for gt_b, p_b in zip(targets_per_image.gt_number_boxes, proposal_number_boxes)]
+                # gt_number_classes = [[gt_c, p_c] for gt_c, p_c in zip(targets_per_image.gt_number_classes, gt_number_classes)]
+                gt_number_sequences = torch.stack((targets_per_image.gt_number_sequences, gt_number_sequences), dim=1)
+                gt_number_lengths = torch.stack((targets_per_image.gt_number_lengths, gt_number_lengths), dim=1)
+            targets_per_image.proposal_number_boxes = proposal_number_boxes
+            # targets_per_image.gt_number_classes = gt_number_classes
+            targets_per_image.gt_number_sequences = gt_number_sequences
+            targets_per_image.gt_number_lengths = gt_number_lengths
+
 
 
 

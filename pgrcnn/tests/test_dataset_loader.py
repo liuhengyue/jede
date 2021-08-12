@@ -57,6 +57,7 @@ def test_base_dataloader(cfg, show_data=False):
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
     # lazy add config file if you want
-    # args.config_file = "configs/pg_rcnn/pg_rcnn_test_coco.yaml"
+    if not args.config_file:
+        args.config_file = "configs/pg_rcnn/tests/baseline.yaml"
     cfg = setup(args)
-    test_base_dataloader(cfg, show_data=True)
+    test_base_dataloader(cfg, show_data=False)

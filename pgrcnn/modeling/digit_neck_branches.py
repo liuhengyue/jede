@@ -104,6 +104,7 @@ class KptsROIBranch(DigitNeckBranch):
         self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
         cfg = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH
         self.up_scale = cfg.UP_SCALE
+        self.deconv_kernel = cfg.DECONV_KERNEL
         conv_dims = cfg.CONV_DIMS
         kernel_size, stride, padding = cfg.CONV_SPECS
         in_channels = input_shape.channels
@@ -114,7 +115,15 @@ class KptsROIBranch(DigitNeckBranch):
             in_channels = layer_channels
             out_height = out_width = (self._output_size[1] - kernel_size + 2 * padding) // stride + 1
             self._output_size = (in_channels, out_height, out_width)
-        self._output_size = (in_channels, self._output_size[1] * self.up_scale, self._output_size[2] * self.up_scale)
+        if self.deconv_kernel > 3:
+            self.deconv = ConvTranspose2d(
+                conv_dims[-1], conv_dims[-1], self.deconv_kernel, stride=2, padding=self.deconv_kernel // 2 - 1
+            )
+        else:
+            self.deconv = None
+        self._output_size = (conv_dims[-1],
+                             self._output_size[1] * self.up_scale * max(1, self.deconv_kernel // 2),
+                             self._output_size[2] * self.up_scale * max(1, self.deconv_kernel // 2))
 
 @ROI_DIGIT_NECK_BRANCHES_REGISTRY.register()
 class KptsAttentionBranch(DigitNeckBranch):
