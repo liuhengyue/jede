@@ -40,9 +40,9 @@ def get_topk_from_heatmap(scores, k=20, largest=True):
     """
     batch, _, height, width = scores.size()
     topk_scores, topk_inds = torch.topk(scores.view(batch, -1), k, largest=largest)
-    topk_clses = topk_inds // (height * width)
+    topk_clses = torch.div(topk_inds, (height * width), rounding_mode='floor')
     topk_inds = topk_inds % (height * width)
-    topk_ys = topk_inds // width
+    topk_ys = torch.div(topk_inds, width, rounding_mode='floor')
     topk_xs = (topk_inds % width).int().float()
     return topk_scores, topk_inds, topk_clses, topk_ys, topk_xs
 
@@ -79,9 +79,9 @@ def get_topk_random_from_heatmap(scores, k=20, ratio=1/4):
     rest_inds = rest_inds[:, perm]
     topk_scores = torch.cat((topk_scores, rest_scores), dim=1)
     topk_inds = torch.cat((topk_inds, rest_inds), dim=1)
-    topk_clses = topk_inds // (height * width)
+    topk_clses = torch.div(topk_inds, (height * width), rounding_mode='floor')
     topk_inds = topk_inds % (height * width)
-    topk_ys = topk_inds // width
+    topk_ys = torch.div(topk_inds, width, rounding_mode='floor')
     topk_xs = (topk_inds % width).int().float()
     return topk_scores, topk_inds, topk_clses, topk_ys, topk_xs
 

@@ -388,7 +388,8 @@ class BaseROIHeads(StandardROIHeads):
             gt_number_sequences = targets_per_image.gt_number_sequences.clone()
             gt_number_lengths = targets_per_image.gt_number_lengths.clone()
             # we get empty tensor for empty boxes
-            valid = [len(b) > 0 and b.nonempty()[0].tolist() for b in proposal_number_boxes]
+            # valid if we have boxes for both proposal and gt
+            valid = [len(b) > 0 and b.nonempty()[0].tolist() and len(gt_b) > 0 for b, gt_b in zip(proposal_number_boxes, gt_number_boxes)]
             sampled_inds = [i for i, v in enumerate(valid) if v]
             sampled_proposal_number_boxes = Boxes.cat([p for v, p in zip(valid, proposal_number_boxes) if v]).to(device)
             sampled_gt_number_boxes = Boxes.cat([p for v, p in zip(valid, gt_number_boxes) if v]).to(device)

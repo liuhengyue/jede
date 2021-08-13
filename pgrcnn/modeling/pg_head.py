@@ -2,6 +2,7 @@ import logging
 import torch
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
+from detectron2.utils import comm
 from detectron2.layers import ShapeSpec, cross_entropy
 from detectron2.modeling.poolers import ROIPooler
 from detectron2.modeling.roi_heads import build_box_head
@@ -302,6 +303,16 @@ class PGROIHeads(BaseROIHeads):
             detection_boxes = [Boxes.cat(x.proposal_number_boxes).to(features[0].device)
                                if x.has('proposal_number_boxes') else Boxes.cat([]).to(features[0].device)
                                for x in proposals]
+            if sum([len(b) for b in detection_boxes]) == 0:
+                # here we need to have at least something to feed the head
+                # currently, pytorch does not support empty input to LSTM or adaptivepooling
+                # which will cause mutliprocssing deadlocking for allgather
+                dummy_boxes = [Boxes(torch.as_tensor([[p.image_size[1] / 2 - 1,
+                                       p.image_size[1] / 2 - 1,
+                                       p.image_size[1] / 2 + 1,
+                                       p.image_size[1] / 2 + 1]], device=features[0].device))
+                               for p in proposals]
+                detection_boxes = dummy_boxes
         else:
             detection_boxes = [Boxes.cat(p.proposal_number_boxes) for p in proposals]
             # detection_boxes = [Boxes.cat(p.pred_digit_boxes).union() for p in proposals]
@@ -368,17 +379,13 @@ class PGROIHeads(BaseROIHeads):
         if self.training:
             # proposals or sampled_instances will be modified in-place
             losses = self._forward_box(features, proposals)
-            # Usually the original proposals used by the box head are used by the mask, keypoint
-            # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
-            # predicted by the box head.
-            # losses.update(self._forward_mask(features, proposals))
             kpt_loss, sampled_instances = self._forward_keypoint(features, proposals)
             losses.update(kpt_loss)
             losses.update(self._forward_pose_guided(features, sampled_instances))
             losses.update(self._forward_digit_box(features, sampled_instances))
             if self.enable_jersey_number_det:
                 losses.update(self._forward_number_box(features, sampled_instances))
-            return proposals, losses
+            return sampled_instances, losses
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
