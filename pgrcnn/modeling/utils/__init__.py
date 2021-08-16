@@ -1,1 +1,1 @@
-from .gaussian_target import compute_targets
+from .gaussian_target import compute_targets, compute_number_targets

@@ -55,7 +55,7 @@ def add_poseguide_config(cfg):
     _C.DATASETS.DIGIT_ONLY = False
     _C.DATASETS.NUM_IMAGES = -1 # -1 means all
     _C.DATASETS.TRAIN_VIDEO_IDS = [0,1,3]
-    _C.DATASETS.TEST_VIDEO_IDS =[2]
+    _C.DATASETS.TEST_VIDEO_IDS = [2]
     _C.DATASETS.NUM_INTERESTS = 1 # we have 1 map, or 3 potential digit locations (L, C, R), also we can have more
     _C.DATASETS.NUM_KEYPOINTS = 4 # we only have annotations of 4 keypoints (LS, RS, RH, LH)
     _C.DATASETS.PAD_TO_FULL = True # if true, we use all 17 keypoints, o/w use 4
@@ -69,8 +69,14 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_HEADS.ENABLE_POSE_GUIDE = True
     _C.MODEL.ROI_JERSEY_NUMBER_DET = CN()
     _C.MODEL.ROI_JERSEY_NUMBER_DET.NAME  = None # "NumDigitClassification"
+    _C.MODEL.ROI_JERSEY_NUMBER_DET.SEQ_MAX_LENGTH = 2 # we only consider 2-digit case
     _C.MODEL.ROI_JERSEY_NUMBER_DET.NUMBER_POOLER_RESOLUTION = (7, 7)
     _C.MODEL.ROI_JERSEY_NUMBER_DET.SEQUENCE_RESOLUTION = (1, 7)
+    _C.MODEL.ROI_JERSEY_NUMBER_NECK = CN()
+    _C.MODEL.ROI_JERSEY_NUMBER_NECK.NAME = None # JerseyNumberNeck
+
+
+
     _C.MODEL.ROI_HEADS.OFFSET_TEST = 0.0 # add a small number (feature level wrt 56x56) to get a larger bounding box
 
     _C.MODEL.ROI_BOX_HEAD.DIGIT_POOLER_RESOLUTION = 7
@@ -102,7 +108,7 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_NECK.SCORE_THRESH_TEST = 0.01
     _C.MODEL.ROI_DIGIT_NECK.NMS_THRESH_TEST = 0.5
     _C.MODEL.ROI_DIGIT_NECK.OFFSET_REG = True
-    _C.MODEL.ROI_DIGIT_NECK.FUSION_TYPE = "cat" # cat, sum, ""
+    _C.MODEL.ROI_DIGIT_NECK.FUSION_TYPE = "cat" # cat, sum, multiply, ""
 
     # digit neck branches
     _C.MODEL.ROI_DIGIT_NECK_BRANCHES = CN()
@@ -132,6 +138,7 @@ def add_poseguide_config(cfg):
     # augmentation
     _C.INPUT.AUG = CN()
     _C.INPUT.AUG.COLOR = False
+    _C.INPUT.AUG.RANDCOLOR = False
     _C.INPUT.AUG.GRAYSCALE = False
     _C.INPUT.AUG.EXTEND = False
 

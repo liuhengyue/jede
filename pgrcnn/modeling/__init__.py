@@ -19,9 +19,10 @@ from .digit_neck_branches import (
 )
 
 from .jersey_number_head import build_jersey_number_head
+from .jersey_number_neck import build_jersey_number_neck
 
 from .meta_arch import pgrcnn
-from .utils import compute_targets
+from .utils import compute_targets, compute_number_targets
 
 _EXCLUDE = {"ShapeSpec"}
 __all__ = [k for k in globals().keys() if k not in _EXCLUDE and not k.startswith("_")]

@@ -18,9 +18,9 @@ from pgrcnn.modeling.digit_head import DigitOutputLayers
 from pgrcnn.structures import Boxes, Players, inside_matched_box
 from pgrcnn.modeling.roi_heads import BaseROIHeads
 from pgrcnn.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
-from pgrcnn.modeling.utils import compute_targets
+from pgrcnn.modeling.utils import compute_targets, compute_number_targets
 from .jersey_number_head import build_jersey_number_head
-
+from .jersey_number_neck import build_jersey_number_neck
 
 _TOTAL_SKIPPED = 0
 
@@ -43,10 +43,14 @@ class PGROIHeads(BaseROIHeads):
         self.size_target_scale = cfg.MODEL.ROI_DIGIT_NECK.SIZE_TARGET_SCALE
         self.out_head_weights = cfg.MODEL.ROI_DIGIT_NECK.OUTPUT_HEAD_WEIGHTS
         self.enable_jersey_number_det = cfg.MODEL.ROI_JERSEY_NUMBER_DET.NAME is not None
+        self.enable_jersey_number_neck = cfg.MODEL.ROI_JERSEY_NUMBER_NECK.NAME is not None
         self._init_digit_head(cfg, input_shape)
         # add classification of number of jersey number
         if self.enable_jersey_number_det:
             self._init_number_head(cfg, input_shape)
+            if self.enable_jersey_number_neck:
+                feat_shape = self.digit_neck.intermediate_shape()
+                self.jersey_number_neck = build_jersey_number_neck(cfg, feat_shape)
 
 
 
@@ -158,7 +162,7 @@ class PGROIHeads(BaseROIHeads):
         # Check all channel counts are equal
         assert len(set(in_channels)) == 1, in_channels
         in_channels = in_channels[0]
-
+        # do we need a neck
 
         # these are used for digit classification/regression after we get the digit ROI
         self.number_box_pooler = ROIPooler(
@@ -212,19 +216,14 @@ class PGROIHeads(BaseROIHeads):
         else:
             kpts_features = None
         # shape (N, 3, 56, 56) (N, 2, 56, 56)
-        center_heatmaps, scale_heatmaps, offset_heatmaps = self.digit_neck(kpts_features, person_features)
-        # if self.enable_jersey_number_det:
-        #     num_digits_logits = self.jersey_number_head(center_heatmaps)
-        # else:
-        #     num_digits_logits = None
-        num_digits_logits = None
+        center_heatmaps, scale_heatmaps, offset_heatmaps, fused_features = self.digit_neck(kpts_features, person_features)
         if self.training:
             loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps,
-                                num_digits_logits,
                                 instances,
                                 size_target_type=self.size_target_type,
                                 size_target_scale=self.size_target_scale,
-                                output_head_weights=self.out_head_weights)
+                                output_head_weights=self.out_head_weights,
+                                target_name="digit")
             with torch.no_grad():
                 bboxes_flat = cat([b.proposal_boxes.tensor if b.has("proposal_boxes")
                                    else torch.empty((0, 4), dtype=torch.float32, device=device)
@@ -242,6 +241,34 @@ class PGROIHeads(BaseROIHeads):
                 # assign new fields to instances
                 self.label_and_sample_digit_proposals(detections, instances)
 
+            # forward with number features
+            if self.enable_jersey_number_neck:
+                center_heatmaps, scale_heatmaps, offset_heatmaps = self.jersey_number_neck(fused_features)
+                number_loss = pg_rcnn_loss(center_heatmaps, scale_heatmaps, offset_heatmaps,
+                                            instances,
+                                            size_target_type=self.size_target_type,
+                                            size_target_scale=self.size_target_scale,
+                                            output_head_weights=self.out_head_weights,
+                                            target_name="number")
+                loss.update(number_loss)
+                with torch.no_grad():
+                    bboxes_flat = cat([b.proposal_boxes.tensor if b.has("proposal_boxes")
+                                       else torch.empty((0, 4), dtype=torch.float32, device=device)
+                                       for b in instances], dim=0)
+                    # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
+                    detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
+                                              reg=offset_heatmaps,
+                                              K=self.num_proposal_train,
+                                              fg_ratio=self.fg_ratio,
+                                              size_target_type=self.size_target_type,
+                                              size_target_scale=self.size_target_scale)
+                    # deal with svhn since the instances will not contain proposal_boxes
+                    len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
+                    detections = list(detections.split(len_instances))
+                    # assign new fields to instances
+                    self.label_and_sample_jerseynumber_proposals(detections, instances)
+
+
             return loss
 
         else:
@@ -258,8 +285,6 @@ class PGROIHeads(BaseROIHeads):
             num_instances = [len(instance) for instance in instances]
             detection_boxes = list(detection[..., :4].split(num_instances))
             detection_ct_classes = list(detection[..., -1].split(num_instances))
-            # if self.enable_jersey_number_det:
-            #     pred_num_digits_scores = F.softmax(num_digits_logits, -1).split(num_instances)
             # assign new fields to instances
             for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
                 # perform a person roi clip
@@ -267,9 +292,6 @@ class PGROIHeads(BaseROIHeads):
                 pred_person_boxes = instances[i].pred_boxes # [N, 4]
                 boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[i])] for i, boxes_per_ins in enumerate(boxes)]
                 instances[i].proposal_digit_boxes = boxes
-                # if self.enable_jersey_number_det:
-                #     instances[i].pred_num_digits_scores = pred_num_digits_scores[i]
-                # instances[i].proposal_digit_ct_classes = [c for c in detection_ct_cls]
             return instances
 
     def _forward_digit_box(self, features, proposals):
@@ -299,7 +321,7 @@ class PGROIHeads(BaseROIHeads):
         features = [features[f] for f in self.in_features]
         # most likely have empty boxes, Boxes.cat([]) will return Boxes on cpu
         if self.training:
-            self.label_and_sample_jerseynumber_proposals(proposals)
+            # self.label_and_sample_jerseynumber_proposals(proposals)
             detection_boxes = [Boxes.cat(x.proposal_number_boxes).to(features[0].device)
                                if x.has('proposal_number_boxes') else Boxes.cat([]).to(features[0].device)
                                for x in proposals]
@@ -466,7 +488,115 @@ def pg_rcnn_loss(
         pred_keypoint_logits,
         pred_scale_logits,
         pred_offset_logits,
-        num_digits_logits,
+        instances,
+        normalizer=None,
+        output_head_weights=(1,0, 1.0, 1.0),
+        size_target_type="ltrb",
+        size_target_scale="feature",
+        target_name="digit"
+        ):
+    """
+    Wrap center and size loss here.
+    We treat the predicted centers as keypoints.
+    Arguments:
+        pred_keypoint_logits (Tensor): A tensor of shape (N, K, S, S) where N is the total number
+            of instances in the batch, K is the number of keypoints, and S is the side length
+            of the keypoint heatmap. The values are spatial logits.
+        instances (list[Instances]): A list of M Instances, where M is the batch size.
+            These instances are predictions from the model
+            that are in 1:1 correspondence with pred_keypoint_logits.
+            Each Instances should contain a `gt_keypoints` field containing a `structures.Keypoint`
+            instance.
+        normalizer (Union[float, None]): Normalize the loss by this amount.
+            If not specified, we normalize by the number of visible keypoints in the minibatch.
+        size_weight (float): Weight for the size regression loss.
+
+    Returns a scalar tensor containing the loss.
+    """
+    has_offset_reg = pred_offset_logits is not None
+    heatmaps = []
+    valid = []
+    scale_targets = []
+    offset_targets =[]
+    # keypoint_side_len = pred_keypoint_logits.shape[2]
+    for instances_per_image in instances:
+        heatmaps_per_image, scales_per_image, offsets_per_image, valid_per_image = \
+            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:],
+                            offset_reg=has_offset_reg,
+                            size_target_type=size_target_type,
+                            size_target_scale=size_target_scale,
+                            target_name=target_name)
+        heatmaps.append(heatmaps_per_image)
+        valid.append(valid_per_image)
+        scale_targets.append(scales_per_image)
+        offset_targets.append(offsets_per_image)
+    # should be safe since we return empty tensors from `compute_targets'
+    keypoint_targets = cat(heatmaps, dim=0)
+    valid = cat(valid, dim=0)
+    scale_targets = cat(scale_targets, dim=0)
+
+    # torch.mean (in binary_cross_entropy_with_logits) doesn't
+    # accept empty tensors, so handle it separately
+    if keypoint_targets.numel() == 0 or valid.numel() == 0:
+        loss = {target_name + '_ct_loss': pred_keypoint_logits.sum() * 0,
+                target_name + '_wh_loss': pred_scale_logits.sum() * 0}
+        if has_offset_reg:
+            loss.update({target_name + "_os_loss": pred_offset_logits.sum() * 0})
+        return loss
+
+
+
+    ct_loss = gaussian_focal_loss(
+        pred_keypoint_logits,
+        keypoint_targets
+    ) * output_head_weights[0]
+
+    # If a normalizer isn't specified, normalize by the number of visible keypoints in the minibatch
+    if normalizer is None:
+        normalizer = valid.size(0)
+    ct_loss /= normalizer
+
+    # size loss
+    if size_target_type == 'wh':
+        pred_scale_logits = pred_scale_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
+        # we predict the scale wrt. feature box
+        wh_loss = output_head_weights[1] * F.smooth_l1_loss(pred_scale_logits, scale_targets,
+                                                            reduction='sum') / normalizer
+    elif size_target_type == 'ltrb':
+        # valid_loc = (keypoint_targets > 0.).squeeze(1)
+        # giou loss
+        # wh_loss = output_head_weights[1] * ltrb_giou_loss(pred_scale_logits.permute(0, 2, 3, 1)[valid_loc],
+        #                                                   scale_targets.permute(0, 2, 3, 1)[valid_loc],
+        #                                                   None,
+        #                                                   reduction='sum') / valid_loc.sum()
+
+        # smooth_l1
+        # wh_loss = output_head_weights[1] * F.smooth_l1_loss(pred_scale_logits.permute(0, 2, 3, 1)[valid_loc],
+        #                                                     scale_targets.permute(0, 2, 3, 1)[valid_loc],
+        #                                                     reduction='sum') / normalizer
+
+        # weighted by center
+        wh_loss = output_head_weights[1] * (F.smooth_l1_loss(pred_scale_logits,
+                                                          scale_targets) * torch.square(keypoint_targets)).sum()
+
+    loss = {target_name + '_ct_loss': ct_loss, target_name + '_wh_loss': wh_loss}
+    if has_offset_reg:
+        offset_targets = cat(offset_targets, dim=0)
+        pred_offset_logits = pred_offset_logits[valid[:, 0], :, valid[:, 1], valid[:, 2]]
+        os_loss = output_head_weights[2] * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
+        loss.update({target_name + "_os_loss": os_loss})
+
+    # if has_num_digits_logits:
+    #     gt_num_digits = torch.bincount(valid[:, 0], minlength=keypoint_targets.shape[0])
+    #     num_digit_cls_loss = cross_entropy(num_digits_logits, gt_num_digits)
+    #     loss.update({"num_digit_cls_loss": num_digit_cls_loss})
+
+    return loss
+
+def pg_rcnn_number_loss(
+        pred_keypoint_logits,
+        pred_scale_logits,
+        pred_offset_logits,
         instances,
         normalizer=None,
         output_head_weights=(1,0, 1.0, 1.0),
@@ -492,7 +622,6 @@ def pg_rcnn_loss(
     Returns a scalar tensor containing the loss.
     """
     has_offset_reg = pred_offset_logits is not None
-    has_num_digits_logits = num_digits_logits is not None
     heatmaps = []
     valid = []
     scale_targets = []
@@ -500,10 +629,10 @@ def pg_rcnn_loss(
     # keypoint_side_len = pred_keypoint_logits.shape[2]
     for instances_per_image in instances:
         heatmaps_per_image, scales_per_image, offsets_per_image, valid_per_image = \
-            compute_targets(instances_per_image, pred_keypoint_logits.shape[1:],
-                            offset_reg=has_offset_reg,
-                            size_target_type=size_target_type,
-                            size_target_scale=size_target_scale)
+            compute_number_targets(instances_per_image, pred_keypoint_logits.shape[1:],
+                                    offset_reg=has_offset_reg,
+                                    size_target_type=size_target_type,
+                                    size_target_scale=size_target_scale)
         heatmaps.append(heatmaps_per_image)
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
@@ -520,8 +649,6 @@ def pg_rcnn_loss(
                 'wh_loss': pred_scale_logits.sum() * 0}
         if has_offset_reg:
             loss.update({"os_loss": pred_offset_logits.sum() * 0})
-        if has_num_digits_logits:
-            loss.update({"num_digit_cls_loss": num_digits_logits.sum() * 0})
         return loss
 
 

@@ -12,14 +12,14 @@ from detectron2.utils.registry import Registry
 from detectron2.modeling.backbone.resnet import DeformBottleneckBlock
 
 from .digit_neck_branches import build_digit_neck_branch
-ROI_DIGIT_NECK_REGISTRY = Registry("ROI_DIGIT_NECK")
+ROI_JERSEY_NUMBER_NECK_REGISTRY = Registry("ROI_JERSEY_NUMBER_NECK")
 
 
-@ROI_DIGIT_NECK_REGISTRY.register()
-class DigitNeck(nn.Module):
+@ROI_JERSEY_NUMBER_NECK_REGISTRY.register()
+class JerseyNumberNeck(nn.Module):
     def __init__(self,
                  cfg: detectron2.config.CfgNode,
-                 input_shapes: Dict[str, ShapeSpec]
+                 input_shape: ShapeSpec
                  ):
         """
 
@@ -54,64 +54,15 @@ class DigitNeck(nn.Module):
 
         self.focal_bias = cfg_roi_digit_neck.FOCAL_BIAS
         activations = {name: activation for name, activation in zip(self.output_head_names, (torch.sigmoid, F.relu, torch.sigmoid))}
-        # activations = {name: activation for name, activation in
-        #                zip(self.output_head_names, (torch.sigmoid, None, None))}
-        cfg_roi_digit_neck_branches = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES
-        self.use_person_features = cfg_roi_digit_neck.USE_PERSON_BOX_FEATURES
-        self.use_kpts_features = cfg_roi_digit_neck.USE_KEYPOINTS_FEATURES
-
-        if self.use_person_features:
-            module = build_digit_neck_branch(cfg_roi_digit_neck_branches.PERSON_BRANCH.NAME, cfg,
-                                             input_shapes["person_box_features_shape"])
-            self.add_module("person_branch", module)
-
-        if self.use_kpts_features:
-            module = build_digit_neck_branch(cfg_roi_digit_neck_branches.KEYPOINTS_BRANCH.NAME, cfg,
-                                             input_shapes["keypoint_heatmap_shape"])
-            self.add_module("kpts_branch", module)
-
-        self.fusion_type = cfg_roi_digit_neck.FUSION_TYPE
-
-        keypoint_heatmap_shape = input_shapes["keypoint_heatmap_shape"]
-        person_box_features_shape = input_shapes["keypoint_heatmap_shape"]
-        if self.use_person_features:
-            person_box_features_shape = self.person_branch.output_shape
-        if self.use_kpts_features:
-            keypoint_heatmap_shape = self.kpts_branch.output_shape
-        if self.fusion_type == "cat":
-            assert person_box_features_shape.height == keypoint_heatmap_shape.height
-            assert person_box_features_shape.width == keypoint_heatmap_shape.width
-            in_channels = keypoint_heatmap_shape.channels + person_box_features_shape.channels
-        elif self.fusion_type == "sum":
-            assert person_box_features_shape == keypoint_heatmap_shape
-            in_channels = keypoint_heatmap_shape.channels
-        elif self.fusion_type == "multiply":
-            assert person_box_features_shape == keypoint_heatmap_shape
-            in_channels = keypoint_heatmap_shape.channels
-        else: # only single branch
-            if self.use_person_features and (not self.use_kpts_features):
-                assert person_box_features_shape.height == keypoint_heatmap_shape.height
-                assert person_box_features_shape.width == keypoint_heatmap_shape.width
-                in_channels = person_box_features_shape.channels
-            elif (not self.use_person_features) and self.use_kpts_features:
-                in_channels = keypoint_heatmap_shape.channels
-            else:
-                raise NotImplementedError("Wrong combinations of FUSION_TYPE / USE_KEYPOINTS_FEATURES / USE_PERSON_BOX_FEATURES.")
-        self._intermediate_shape = ShapeSpec(channels=in_channels,
-                                            height=keypoint_heatmap_shape.height,
-                                            width=keypoint_heatmap_shape.width)
+        in_channels = input_shape.channels
 
         for name, out_channels in zip(self.output_head_names, self.output_head_channels):
             activation = activations[name]
             module = self._init_output_layers(conv_dims, in_channels, out_channels, activation=activation)
             self.add_module(name, module)
-
         self.offset_reg = hasattr(self, "offset")
-        assert self.use_person_features or self.use_kpts_features, "One of them has to be True."
         self._init_weights()
 
-    def intermediate_shape(self):
-        return self._intermediate_shape
 
     def _init_weights(self):
         def normal_init(module, mean=0, std=1, bias=0):
@@ -179,20 +130,7 @@ class DigitNeck(nn.Module):
         modules.append(head)
         return nn.Sequential(*modules)
 
-    def forward(self, kpts_features, person_features):
-        if self.use_kpts_features:
-            kpts_features = self.kpts_branch(kpts_features)
-        if self.use_person_features:
-            person_features = self.person_branch(person_features)
-        # merge the features
-        if self.fusion_type == "cat":
-            x = torch.cat((kpts_features, person_features), dim=1)
-        elif self.fusion_type == "sum":
-            x = torch.add(kpts_features, person_features)
-        elif self.fusion_type == "multiply":
-            x = kpts_features * person_features
-        else:
-            x = kpts_features if self.use_kpts_features else person_features
+    def forward(self, x):
         #  x will be feed into different prediction heads
         pred_center_heatmaps = self.center(x)
         pred_scale_heatmaps = self.size(x)
@@ -200,13 +138,13 @@ class DigitNeck(nn.Module):
             pred_offset_heatmaps = self.offset(x)
         else:
             pred_offset_heatmaps = None
-        # center, size, offset heatmaps and the intermediate features
-        return [pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps, x]
+        # center, size, offset heatmaps
+        return [pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps]
 
 
-def build_digit_neck(cfg, input_shapes):
+def build_jersey_number_neck(cfg, input_shapes):
     """
     Build a box head defined by `cfg.MODEL.ROI_BOX_HEAD.NAME`.
     """
-    name = cfg.MODEL.ROI_DIGIT_NECK.NAME
-    return ROI_DIGIT_NECK_REGISTRY.get(name)(cfg, input_shapes)
+    name = cfg.MODEL.ROI_JERSEY_NUMBER_NECK.NAME
+    return ROI_JERSEY_NUMBER_NECK_REGISTRY.get(name)(cfg, input_shapes)

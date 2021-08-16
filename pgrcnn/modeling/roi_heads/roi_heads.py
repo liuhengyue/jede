@@ -370,47 +370,152 @@ class BaseROIHeads(StandardROIHeads):
 
     @torch.no_grad()
     def label_and_sample_jerseynumber_proposals(self,
-                                                targets: List[Players],
-                                                add_gt=True):
+                                                 detections: List[torch.tensor],
+                                                 targets: List[Players]):
         """
-        targets: list (Players): a list of instances.
+        detections: (N, K, 6) where K = self.num_ctdet_proposal
+        instance: single instance of one image
         """
-        for targets_per_image in targets: # image level
-            proposal_digit_boxes = targets_per_image.proposal_digit_boxes
-            # get the top k boxes based on cfg
-            # proposal_number_boxes = [b[:self.top_k_digits].union() for b in proposal_digit_boxes]
-            # or based on threshold
-            proposal_scores = targets_per_image.proposal_digit_scores
-            proposal_number_boxes = [b[s > 0.5].union() for b, s in zip(proposal_digit_boxes, proposal_scores)]
+        num_fg_samples = []
+        num_bg_samples = []
+        for detection_per_image, targets_per_image in zip(detections, targets):
+            if not targets_per_image.has('gt_number_boxes'):
+                continue
+            if not targets_per_image.has("proposal_boxes"):
+                targets_per_image.proposal_number_boxes = targets_per_image.gt_number_boxes
+                continue
+            N = len(targets_per_image)
+            # create a instance index to match with person proposal_box
+            inds = torch.arange(N).repeat_interleave(detection_per_image.size(1), dim=0).to(detection_per_image.device)
+            # shape of (N, K, 6) -> (N * K, 6)
+            detection_per_image = detection_per_image.view(-1, detection_per_image.size(-1))
+            boxes = detection_per_image[:, :4]
+            detection_ct_scores = detection_per_image[:, 4]
+            # detection_ct_classes = detection_per_image[:, 5].to(torch.int8)
+            boxes = Boxes(boxes)
+            # we have empty boxes at the beginning of the training
+            keep = boxes.nonempty()
+            boxes = boxes[keep]
+            # detection_ct_classes = detection_ct_classes[keep]
+            detection_ct_scores = detection_ct_scores[keep]
+            # we clip by the image, probably clipping based on the person ROI works better?
+            boxes.clip(targets_per_image.image_size)
+            # now we match the digit boxes with detections
             gt_number_boxes = targets_per_image.gt_number_boxes
-            device = targets_per_image.proposal_boxes.device
-            # gt_number_classes = targets_per_image.gt_number_classes.copy()
-            gt_number_sequences = targets_per_image.gt_number_sequences.clone()
-            gt_number_lengths = targets_per_image.gt_number_lengths.clone()
-            # we get empty tensor for empty boxes
-            # valid if we have boxes for both proposal and gt
-            valid = [len(b) > 0 and b.nonempty()[0].tolist() and len(gt_b) > 0 for b, gt_b in zip(proposal_number_boxes, gt_number_boxes)]
-            sampled_inds = [i for i, v in enumerate(valid) if v]
-            sampled_proposal_number_boxes = Boxes.cat([p for v, p in zip(valid, proposal_number_boxes) if v]).to(device)
-            sampled_gt_number_boxes = Boxes.cat([p for v, p in zip(valid, gt_number_boxes) if v]).to(device)
-            # perform matching [N,] scores of matching
-            match_quality_matrix = matched_boxlist_iou(sampled_gt_number_boxes, sampled_proposal_number_boxes)
-            # only set empty boxes or boxes of iou < 0.7 be negative
-            neg_inds = [i for i in range(len(valid)) if ( (not valid[i]) or match_quality_matrix[sampled_inds.index(i)] < 0.7 )]
-            # set negative to empty
-            for neg_ind in neg_inds:
-                gt_number_lengths[neg_ind] = 0
-                # gt_number_classes[neg_ind] = torch.empty((0,), dtype=torch.long, device=match_quality_matrix.device)
-                proposal_number_boxes[neg_ind] = Boxes([]).to(match_quality_matrix.device)
-            if add_gt:
-                proposal_number_boxes = [ Boxes.cat((gt_b, p_b)) for gt_b, p_b in zip(targets_per_image.gt_number_boxes, proposal_number_boxes)]
-                # gt_number_classes = [[gt_c, p_c] for gt_c, p_c in zip(targets_per_image.gt_number_classes, gt_number_classes)]
-                gt_number_sequences = torch.stack((targets_per_image.gt_number_sequences, gt_number_sequences), dim=1)
-                gt_number_lengths = torch.stack((targets_per_image.gt_number_lengths, gt_number_lengths), dim=1)
-            targets_per_image.proposal_number_boxes = proposal_number_boxes
-            # targets_per_image.gt_number_classes = gt_number_classes
-            targets_per_image.gt_number_sequences = gt_number_sequences
-            targets_per_image.gt_number_lengths = gt_number_lengths
+            gt_valid = targets_per_image.gt_number_lengths > 0
+            gt_number_classes = gt_valid[gt_valid].long()
+            gt_number_lengths = targets_per_image.gt_number_lengths[gt_valid]
+            gt_number_sequences = targets_per_image.gt_number_sequences[gt_valid]
+            # (N boxes)
+            if len(boxes) and gt_number_classes.numel():
+                gt_number_boxes = Boxes.cat(gt_number_boxes) # will remove empty boxes
+                gt_number_classes = gt_number_boxes.remove_duplicates(gt_number_classes)
+
+                # get ground-truth match based on iou MxN
+                match_quality_matrix = pairwise_iou(
+                    gt_number_boxes, boxes
+                )
+                # (N,) idx in [0, M); (N,) label of either 1, 0, or -1
+                matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+                # if gt_digit_classes is 0, then it is background
+                # returns vectors of length N', idx in [0, N); same length N', cls in [1, 10] or background 0
+                sampled_idxs, gt_number_classes = \
+                    self._sample_digit_proposals(matched_idxs, matched_labels, gt_number_classes)
+                # the indices of which person each digit proposal is associated with
+                inds = inds[sampled_idxs]  # digit -> person
+                boxes = boxes[sampled_idxs]
+                detection_ct_scores = detection_ct_scores[sampled_idxs]
+                # detection_ct_classes = detection_ct_classes[sampled_idxs]
+                # get the reverse ids for person -> digit
+                reverse_inds = [torch.where(inds == i)[0] for i in range(N)]
+                # init a list of Boxes to store digit proposals
+                targets_per_image.proposal_number_boxes = [
+                    boxes[i] for i in reverse_inds
+                ]
+                # store the corresponding digit center scores
+                targets_per_image.proposal_number_scores = [
+                    detection_ct_scores[i] for i in reverse_inds
+                ]
+                # gt_digit_classes is returned by '_sample_digit_proposals'
+                targets_per_image.gt_number_classes = [
+                    gt_number_classes[i] for i in reverse_inds]
+
+                # the gt index for each digit proposal
+                gt_number_boxes = gt_number_boxes[matched_idxs[sampled_idxs]]
+                targets_per_image.gt_number_boxes = [
+                    gt_number_boxes[i] for i in reverse_inds]
+
+                gt_number_lengths = gt_number_lengths[matched_idxs[sampled_idxs]]
+                gt_number_sequences = gt_number_sequences[matched_idxs[sampled_idxs]]
+                targets_per_image.gt_number_lengths = [gt_number_lengths[i] for i in reverse_inds]
+                targets_per_image.gt_number_sequences = [gt_number_sequences[i] for i in reverse_inds]
+            else:
+                # or add gt to the training
+                # remove the gt fields (which will be taken care in Faster_rcnn output
+                # targets_per_image.remove("gt_number_boxes")
+                device = detection_per_image.device
+                targets_per_image.gt_number_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.gt_number_classes = [torch.empty((0,), dtype=torch.long, device=device) for _ in range(N)]
+                targets_per_image.gt_number_lengths = [torch.empty((0, ), dtype=torch.long, device=device) for _ in
+                                                       range(N)]
+                targets_per_image.gt_number_sequences = [torch.empty((0, gt_number_sequences.size(-1)), dtype=torch.long, device=device) for _ in
+                                                       range(N)]
+                targets_per_image.proposal_number_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
+                targets_per_image.proposal_number_scores = [torch.empty((0,), device=device) for _ in range(N)]
+
+                # targets_per_image.proposal_digit_ct_classes = [torch.empty(0, device=device).long() for _ in range(N)]
+                # targets_per_image.gt_digit_boxes = [Boxes(torch.empty(0, 4, device=device)) for _ in range(N)]
+                # targets_per_image.gt_digit_classes = [torch.empty(0, device=device).long() for _ in range(N)]
+            num_bg_samples.append((gt_number_classes == 0).sum().item())
+            num_fg_samples.append(gt_number_classes.numel() - num_bg_samples[-1])
+        # Log the number of fg/bg samples that are selected for training ROI heads
+        storage = get_event_storage()
+        storage.put_scalar("pg_head/num_fg_num_samples", np.mean(num_fg_samples) if len(num_fg_samples) else 0.)
+        storage.put_scalar("pg_head/num_bg_num_samples", np.mean(num_bg_samples) if len(num_bg_samples) else 0.)
+
+    # @torch.no_grad()
+    # def label_and_sample_jerseynumber_proposals(self,
+    #                                             targets: List[Players],
+    #                                             add_gt=True):
+    #     """
+    #     targets: list (Players): a list of instances.
+    #     """
+    #     for targets_per_image in targets: # image level
+    #         proposal_digit_boxes = targets_per_image.proposal_digit_boxes
+    #         # get the top k boxes based on cfg
+    #         # proposal_number_boxes = [b[:self.top_k_digits].union() for b in proposal_digit_boxes]
+    #         # or based on threshold
+    #         proposal_scores = targets_per_image.proposal_digit_scores
+    #         proposal_number_boxes = [b[s > 0.5].union() for b, s in zip(proposal_digit_boxes, proposal_scores)]
+    #         gt_number_boxes = targets_per_image.gt_number_boxes
+    #         device = targets_per_image.proposal_boxes.device
+    #         # gt_number_classes = targets_per_image.gt_number_classes.copy()
+    #         gt_number_sequences = targets_per_image.gt_number_sequences.clone()
+    #         gt_number_lengths = targets_per_image.gt_number_lengths.clone()
+    #         # we get empty tensor for empty boxes
+    #         # valid if we have boxes for both proposal and gt
+    #         valid = [len(b) > 0 and b.nonempty()[0].tolist() and len(gt_b) > 0 for b, gt_b in zip(proposal_number_boxes, gt_number_boxes)]
+    #         sampled_inds = [i for i, v in enumerate(valid) if v]
+    #         sampled_proposal_number_boxes = Boxes.cat([p for v, p in zip(valid, proposal_number_boxes) if v]).to(device)
+    #         sampled_gt_number_boxes = Boxes.cat([p for v, p in zip(valid, gt_number_boxes) if v]).to(device)
+    #         # perform matching [N,] scores of matching
+    #         match_quality_matrix = matched_boxlist_iou(sampled_gt_number_boxes, sampled_proposal_number_boxes)
+    #         # only set empty boxes or boxes of iou < 0.7 be negative
+    #         neg_inds = [i for i in range(len(valid)) if ( (not valid[i]) or match_quality_matrix[sampled_inds.index(i)] < 0.7 )]
+    #         # set negative to empty
+    #         for neg_ind in neg_inds:
+    #             gt_number_lengths[neg_ind] = 0
+    #             # gt_number_classes[neg_ind] = torch.empty((0,), dtype=torch.long, device=match_quality_matrix.device)
+    #             proposal_number_boxes[neg_ind] = Boxes([]).to(match_quality_matrix.device)
+    #         if add_gt:
+    #             proposal_number_boxes = [ Boxes.cat((gt_b, p_b)) for gt_b, p_b in zip(targets_per_image.gt_number_boxes, proposal_number_boxes)]
+    #             # gt_number_classes = [[gt_c, p_c] for gt_c, p_c in zip(targets_per_image.gt_number_classes, gt_number_classes)]
+    #             gt_number_sequences = torch.stack((targets_per_image.gt_number_sequences, gt_number_sequences), dim=1)
+    #             gt_number_lengths = torch.stack((targets_per_image.gt_number_lengths, gt_number_lengths), dim=1)
+    #         targets_per_image.proposal_number_boxes = proposal_number_boxes
+    #         # targets_per_image.gt_number_classes = gt_number_classes
+    #         targets_per_image.gt_number_sequences = gt_number_sequences
+    #         targets_per_image.gt_number_lengths = gt_number_lengths
 
 
 

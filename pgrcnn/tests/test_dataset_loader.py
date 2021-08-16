@@ -25,7 +25,8 @@ def visualize_training(batched_inputs, cfg):
     """
 
     jnw_metadata = MetadataCatalog.get("jerseynumbers_train")
-    assert len(batched_inputs) == 1, "visualize_training() needs batch size of 1"
+    batched_inputs = [batched_inputs[0]] if len(batched_inputs) > 1 else batched_inputs
+    # assert len(batched_inputs) == 1, "visualize_training() needs batch size of 1"
     for input in batched_inputs:
         img = input["image"].cpu().numpy()
         assert img.shape[0] == 3, "Images should have 3 channels."
@@ -42,16 +43,13 @@ def test_base_dataloader(cfg, show_data=False):
     dataloader = build_detection_train_loader(cfg, mapper=JerseyNumberDatasetMapper(cfg, True))
 
     for data in dataloader:
-        try:
-            logger.info(f"{data[0]['file_name']}")
-            logger.info(f"{data[0]['instances']}")
-            if show_data:
-                file_name, vis_img = visualize_training(data, cfg)
-                cv2.imshow(file_name, vis_img)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
-        except:
-            raise Exception(f"Error when processing {data[0]['file_name']}")
+        logger.info(f"{data[0]['file_name']}")
+        logger.info(f"{data[0]['instances']}")
+        if show_data:
+            file_name, vis_img = visualize_training(data, cfg)
+            cv2.imshow(file_name, vis_img)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
@@ -60,4 +58,4 @@ if __name__ == "__main__":
     if not args.config_file:
         args.config_file = "configs/pg_rcnn/tests/baseline.yaml"
     cfg = setup(args)
-    test_base_dataloader(cfg, show_data=False)
+    test_base_dataloader(cfg, show_data=True)

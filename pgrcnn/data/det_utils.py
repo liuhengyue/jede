@@ -133,7 +133,7 @@ def transform_instance_annotations(
 def annotations_to_instances(annos,
                              image_size,
                              digit_only=False,
-                             seq_max_length=3
+                             seq_max_length=2
                              ):
     """
     Create an :class:`Instances` object used by the models,
@@ -212,7 +212,9 @@ def annotations_to_instances(annos,
         target.gt_digit_centers = [box.get_centers() for box in boxes]
         target.gt_digit_scales = [box.get_scales() for box in boxes]
         # we then add instance-level jersey number box and cls
-        target.gt_number_boxes = [box.union() for box in boxes] # there could be empty box
+        gt_number_boxes = target.gt_number_boxes = [box.union() for box in boxes] # there could be empty box
+        target.gt_number_centers = [box.get_centers() for box in gt_number_boxes]
+        target.gt_number_scales = [box.get_scales() for box in gt_number_boxes]
         # target.gt_number_classes = classes
         # create sequence with zero paddings
         gt_lengths = torch.as_tensor([x.numel() for x in classes], dtype=torch.long)
@@ -335,5 +337,30 @@ def build_augmentation(cfg, is_train):
 
         if cfg.INPUT.AUG.EXTEND:
             augmentation.append(T.RandomExtent((1.2, 2.0), (0.4, 0.4)))
+
+        if cfg.INPUT.AUG.RANDCOLOR:
+            augmentation.append(custom_T.RandColor())
+
+    return augmentation
+
+def build_per_image_augmentation(cfg, is_train):
+    """
+    Create a list of :class:`TransformGen` from config.
+    Now it includes resizing and flipping.
+
+    Returns:
+        list[TransformGen]
+    """
+    augmentation = []
+    # apply aug per image then copy paste mix
+    if is_train and cfg.INPUT.AUG.COPY_PASTE_MIX > 0:
+        if cfg.INPUT.AUG.COLOR:
+            # tfm_gens.append(T.RandomLighting(scale=10.0))
+            augmentation.append(T.RandomBrightness(0.5, 1.5))
+            augmentation.append(T.RandomSaturation(0.5, 1.5))
+            augmentation.append(T.RandomContrast(0.5, 1.5))
+
+        if cfg.INPUT.AUG.RANDCOLOR:
+            augmentation.append(custom_T.RandColor())
 
     return augmentation

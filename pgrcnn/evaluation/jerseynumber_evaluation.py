@@ -652,6 +652,8 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
     # add jersey number recognitions
     jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_jersey_numbers] \
         if instances.has("pred_jersey_numbers") else [[] for _ in range(num_instance)]
+    jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_jersey_numbers_scores] \
+        if instances.has("pred_jersey_numbers_scores") else [[] for _ in range(num_instance)]
     results = []
     for k in range(num_instance):
         result = {
@@ -662,6 +664,7 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
         }
         if k < num_person_instance:
             result["jersey_number"] = jersey_numbers[k]
+            result["jersey_number_score"] = jersey_scores[k]
             if has_keypoints:
                 # In COCO annotations,
                 # keypoints coordinates are pixel indices.

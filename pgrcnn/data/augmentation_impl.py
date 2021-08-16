@@ -12,10 +12,11 @@ from fvcore.transforms.transform import (
     TransformList,
     VFlipTransform,
 )
+from detectron2.data import transforms as T
 from detectron2.data import detection_utils as utils
 from detectron2.data.transforms import Augmentation, ExtentTransform, ResizeTransform, RotationTransform
 
-__all__ = ["ConvertGrayscale", "copy_paste_mix_images"]
+__all__ = ["ConvertGrayscale", "copy_paste_mix_images", "RandColor"]
 class ConvertGrayscale(Augmentation):
     """
     ConvertGrayscale
@@ -29,6 +30,23 @@ class ConvertGrayscale(Augmentation):
         assert img.shape[-1] == 3, "ConvertGrayscale only works on RGB images"
         grayscale = img.dot([0.299, 0.587, 0.114])[:, :, np.newaxis]
         return BlendTransform(src_image=grayscale, src_weight=1, dst_weight=0)
+
+class RandColor(Augmentation):
+    """
+    ConvertGrayscale
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._init(locals())
+
+    def get_transform(self, img):
+        w = np.random.rand(3)
+        mix_w = np.random.uniform(0.1, 1)
+        if mix_w < 0.5:
+            img = np.invert(img)
+        # img.mean()[np.newaxis] * w
+        return BlendTransform(src_image=img * w, src_weight=1 - mix_w, dst_weight=mix_w)
 
 
 def paste_image(target_image, img, alpha=0.5):
@@ -70,7 +88,8 @@ def copy_paste_mix_images(dataset_dicts,
                           max_size=800,
                           min_scale=0.2,
                           # max_scale=1.0,
-                          interp=Image.BILINEAR
+                          interp=Image.BILINEAR,
+                          augmentations=None
                           ):
     """
 
@@ -103,6 +122,10 @@ def copy_paste_mix_images(dataset_dicts,
     for dataset_dict in dataset_dicts:
         img = utils.read_image(dataset_dict["file_name"], format=format)
         utils.check_image_size(dataset_dict, img)
+        # apply the per image augmentation
+        aug_input = T.AugInput(img, sem_seg=None)
+        transforms = augmentations(aug_input)
+        img = aug_input.image
 
         # Compute the image scale and scaled size.
         input_size = img.shape[:2]

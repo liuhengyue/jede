@@ -11,6 +11,126 @@ def compute_targets(
         offset_reg: bool = True,
         size_target_type: str = Union["wh", "ltrb"],
         size_target_scale: str = Union["feature", "ratio"],
+        min_overlap: float = 0.3,
+        target_name: str = "digit"
+) -> Tuple[torch.Tensor, torch.Tensor, Union[torch.Tensor, None], torch.Tensor]:
+    """
+        Encode keypoint locations into a target heatmap for use in Gaussian Focal loss.
+
+        Arguments:
+            instances_per_image: contain fields used
+                keypoints: list of N tensors of keypoint locations in of shape (-1, 2).
+                rois: Nx4 tensor of rois in xyxy format
+            heatmap_size: represents (K, H, W)
+
+        Returns:
+            heatmaps: A tensor of shape (N, K, H, W)
+    """
+    K, H, W = heatmap_size
+    if not instances_per_image.has("proposal_boxes"):
+        device = instances_per_image.gt_digit_boxes[0].device
+        return torch.empty((0, K, H, W), device=device), \
+               torch.empty((0, 2), dtype=torch.float, device=device), \
+               torch.empty((0, 2), dtype=torch.float, device=device) if offset_reg else None, \
+               torch.empty((0, 3), dtype=torch.long, device=device)
+    pred_keypoint_logits = instances_per_image.pred_keypoints_logits
+    # we define a zero tensor as the output heatmaps
+    N = pred_keypoint_logits.shape[0]
+    rois = instances_per_image.proposal_boxes.tensor
+    heatmaps = torch.zeros((N, K, H, W), device=pred_keypoint_logits.device)
+    target_center_name = "gt_" + target_name + "_centers"
+    target_scale_name = "gt_" + target_name + "_scales"
+    if (not instances_per_image.has(target_center_name)) or rois.numel() == 0:
+        return heatmaps, \
+               torch.zeros((0, 2), dtype=torch.float, device=pred_keypoint_logits.device), \
+               torch.empty((0, 2), dtype=torch.float, device=pred_keypoint_logits.device) if offset_reg else None, \
+               torch.zeros((0, 3), dtype=torch.long, device=pred_keypoint_logits.device)
+    keypoints = instances_per_image.get(target_center_name)
+    scales = instances_per_image.get(target_scale_name)
+
+    # record the positive locations
+    valid = []
+    # gt scale targets
+    if size_target_type == "wh":
+        scale_targets = []
+    elif size_target_type == "ltrb":
+        scale_targets = torch.zeros((N, 4, H, W), device=pred_keypoint_logits.device)
+    else:
+        raise NotImplementedError()
+    offset_targets = []
+    offset_x = rois[:, 0]
+    offset_y = rois[:, 1]
+    if size_target_scale == "feature":
+        scale_x = W / (rois[:, 2] - rois[:, 0])
+        scale_y = H / (rois[:, 3] - rois[:, 1])
+    elif size_target_scale == "ratio": # wrt to person roi
+        scale_x = 1. / (rois[:, 2] - rois[:, 0])
+        scale_y = 1. / (rois[:, 3] - rois[:, 1])
+    else:
+        raise NotImplementedError()
+
+    # process per roi
+    for i, (kpts, scale, dx, dy, dw, dh, roi) in \
+            enumerate(zip(keypoints, scales, offset_x, offset_y, scale_x, scale_y, rois)):
+        x = kpts[..., 0]
+        y = kpts[..., 1]
+
+        x_boundary_inds = x == roi[2]
+        y_boundary_inds = y == roi[3]
+
+        x = (x - dx) * dw
+        y = (y - dy) * dh
+        if offset_reg:
+            # also compute a offset shift for prediction
+            x_offset_reg = x - x.floor()
+            y_offset_reg = y - y.floor()
+        x = x.floor().long()
+        y = y.floor().long()
+
+        x[x_boundary_inds] = W - 1
+        y[y_boundary_inds] = H - 1
+
+        valid_loc = (x >= 0) & (y >= 0) & (x < W) & (y < H)
+        # mark the positive targets
+        y = y[valid_loc]
+        x = x[valid_loc]
+        # digit box size in feature size (w, h)
+        scale = scale[valid_loc] * torch.stack((dw, dh))[None, ...] # (N, 2)
+        radius = gaussian_radius(scale, min_overlap=min_overlap).int()
+        radius = torch.maximum(torch.zeros_like(radius), radius)
+        gen_gaussian_target(heatmaps[i],
+                            [x, y],
+                            radius)
+        # add the roi index for easy selection for scale regression
+        valid.append(
+            torch.stack(((torch.ones_like(x) * i).long(), y, x), dim=1)
+        )
+        if size_target_type == "wh":
+            scale_targets.append(scale)
+        elif size_target_type == "ltrb":
+            gen_ltrb_target(scale_targets[i],
+                            [x, y],
+                            radius,
+                            scale)
+
+        if offset_reg:
+            y_offset_reg = y_offset_reg[valid_loc]
+            x_offset_reg = x_offset_reg[valid_loc]
+            offset_targets.append(torch.stack((x_offset_reg, y_offset_reg), dim=1))
+
+    # we may have different number of valid points within each roi, so cat
+    return heatmaps, \
+           torch.cat(scale_targets, dim=0) if size_target_type == "wh" else scale_targets, \
+           torch.cat(offset_targets, dim=0) if len(offset_targets) else None, \
+           torch.cat(valid, dim=0)
+
+
+def compute_number_targets(
+        instances_per_image: Players,
+        heatmap_size: Tuple[int, int, int],
+        offset_reg: bool = True,
+        size_target_type: str = Union["wh", "ltrb"],
+        size_target_scale: str = Union["feature", "ratio"],
         min_overlap: float = 0.3
 ) -> Tuple[torch.Tensor, torch.Tensor, Union[torch.Tensor, None], torch.Tensor]:
     """
@@ -120,8 +240,6 @@ def compute_targets(
            torch.cat(scale_targets, dim=0) if size_target_type == "wh" else scale_targets, \
            torch.cat(offset_targets, dim=0) if len(offset_targets) else None, \
            torch.cat(valid, dim=0)
-
-
 
 def gaussian2D(radius, sigma=1):
     """Generate 2D gaussian kernel.

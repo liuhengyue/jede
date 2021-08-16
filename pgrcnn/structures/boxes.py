@@ -33,8 +33,8 @@ class Boxes(detectron_boxes):
         y1 = torch.min(self.tensor[..., 1])
         x2 = torch.max(self.tensor[..., 2])
         y2 = torch.max(self.tensor[..., 3])
-        box = torch.as_tensor([[x1, y1, x2, y2]])
-        return Boxes(box).to(self.tensor.device)
+        box = torch.as_tensor([[x1, y1, x2, y2]], device=self.tensor.device)
+        return Boxes(box)
 
     def __getitem__(self, item) -> "Boxes":
         """

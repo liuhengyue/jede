@@ -64,6 +64,39 @@ def _create_text_labels(classes, scores, class_names, is_crowd=None):
         labels = [l + ("|crowd" if crowd else "") for l, crowd in zip(labels, is_crowd)]
     return labels
 
+def _create_person_labels(classes, scores, jersey_numbers, jersey_scores, class_names):
+    """
+    Args:
+        classes (list[int] or None):
+        scores (list[float] or None):
+        class_names (list[str] or None):
+        is_crowd (list[bool] or None):
+
+    Returns:
+        list[str] or None
+    """
+    # labels = None
+    # if classes is not None:
+    #     if class_names is not None and len(class_names) > 0:
+    #         labels = [class_names[i] for i in classes]
+    #     else:
+    #         labels = [str(i) for i in classes]
+    # if scores is not None:
+    #     if labels is None:
+    #         labels = ["{:.0f}%".format(s * 100) for s in scores]
+    #     else:
+    #         labels = ["{}\n{:.0f}%".format(l, s * 100) for l, s in zip(labels, scores)]
+    jersey_labels = []
+    if jersey_numbers is not None:
+        if class_names is not None and len(class_names) > 0:
+            jersey_labels = [''.join([class_names[i] for i in jersey_numbers])]
+        else:
+            jersey_labels = [''.join([str(i) for i in jersey_numbers])]
+        # labels = [l + jl for l, jl in zip(labels, jersey_labels)]
+    if jersey_scores is not None:
+        jersey_labels = ["{}\n{:.0f}%".format(l, s * 100) for l, s in zip(jersey_labels, jersey_scores)]
+    return jersey_labels
+
 class MontageImage:
     def __init__(self, img, nrows=1, ncols=2, scale=1.0):
         """
@@ -188,7 +221,8 @@ class JerseyNumberVisualizer(Visualizer):
             "keypoints": instance.gt_keypoints.tensor.numpy() if instance.has('gt_keypoints') else np.empty((0, 17, 3)),
             "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if instance.has('gt_digit_boxes') else np.empty((0, 4)),
             "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if instance.has('gt_digit_classes') else np.empty((0,)),
-            "category_id": instance.gt_classes.numpy() if instance.has('gt_classes') else np.empty((0,))
+            "category_id": instance.gt_classes.numpy() if instance.has('gt_classes') else np.empty((0,)),
+            "jersey_numbers": [number_ids.numpy() for number_ids in instance.jersey_numbers] if instance.has('jersey_numbers') else [],
             })
         return {"annotations": instances_list}
 
@@ -208,6 +242,8 @@ class JerseyNumberVisualizer(Visualizer):
             "digit_bboxes": Boxes.cat(data.pred_digit_boxes).tensor.numpy() if data.has('pred_digit_boxes') else np.empty((0, 4)),
             "digit_ids": torch.cat(data.pred_digit_classes).numpy() if data.has('pred_digit_classes') else np.empty((0,)),
             "digit_scores": torch.cat(data.digit_scores).numpy() if data.has('digit_scores') else np.empty((0,)),
+            "jersey_numbers": data.jersey_numbers[0].numpy() if data.has('jersey_numbers') else np.empty((0,)),
+            "jersey_number_scores": data.jersey_number_scores[0].numpy() if data.has('jersey_number_scores') else np.empty((0,)),
             })
         return instances_list
 
@@ -255,6 +291,7 @@ class JerseyNumberVisualizer(Visualizer):
 
     def draw_single_instance(self, instance):
         """
+        instance can be either from detection or gt
         Given a instance dict, draw the corresponding
         person bbox, keypoints(if available), and digit bounding boxes (if available)
 
@@ -272,13 +309,18 @@ class JerseyNumberVisualizer(Visualizer):
             # we will have score if coming from predictions
             scores = instance.get("scores", None)
             digit_scores = instance.get("digit_scores", None)
-            labels = _create_text_labels(category_id, scores, self.metadata.get("thing_classes", None))
+            # get jersey number predictions
+            jersey_numbers = instance.get("jersey_numbers", instance.get("digit_ids", None))
+            jersey_scores = instance.get("jersey_number_scores", None)
+            labels = _create_person_labels(category_id, scores, jersey_numbers, jersey_scores, self.metadata.get("thing_classes", None))
             digit_labels = _create_text_labels(digit_ids, digit_scores, self.metadata.get("thing_classes", None))
 
             keypoints = pad_full_keypoints(keypoints)
             # no corresponding keypoint annotation
             if person_bbox.size and (not keypoints.size):
                 keypoints = np.zeros((1, keypoints.shape[1], keypoints.shape[2]), dtype=np.float32)
+
+
 
             # here, we have two different bbox (person and digit)
             if bbox_mode is not None:

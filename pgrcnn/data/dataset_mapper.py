@@ -42,6 +42,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         self.keypoints_inds    = kwargs.pop("keypoints_inds")
         self.copy_paste_mix    = kwargs.pop("copy_paste_mix")
         self.max_size_train    = kwargs.pop("max_size_train")
+        self.seq_max_length    = kwargs.pop("seq_max_length")
+        self.per_image_augmentations = kwargs.pop("per_image_augmentations")
 
         # fmt: on
         super().__init__(*args, **kwargs)
@@ -51,6 +53,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         ret = super().from_config(cfg, is_train)
         # our customizations
         augs = det_utils.build_augmentation(cfg, is_train)
+        per_image_augmentations = det_utils.build_per_image_augmentation(cfg, is_train)
         if cfg.INPUT.CROP.ENABLED and is_train:
             augs.insert(0, T.RandomCrop(cfg.INPUT.CROP.TYPE, cfg.INPUT.CROP.SIZE))
         ret.update(
@@ -61,8 +64,11 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 "keypoints_inds": cfg.DATASETS.KEYPOINTS_INDS,
                 # update augmentations
                 "augmentations": augs,
+                "per_image_augmentations": T.AugmentationList(per_image_augmentations),
                 "copy_paste_mix": cfg.INPUT.AUG.COPY_PASTE_MIX,
-                "max_size_train": cfg.INPUT.MAX_SIZE_TRAIN
+                "max_size_train": cfg.INPUT.MAX_SIZE_TRAIN,
+                # seq model
+                "seq_max_length": cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQ_MAX_LENGTH
             }
         )
         return ret
@@ -123,7 +129,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 if obj.get("iscrowd", 0) == 0
             ]
             instances = det_utils.annotations_to_instances(
-                annos, image_shape, digit_only=self.digit_only
+                annos, image_shape, digit_only=self.digit_only,
+                seq_max_length=self.seq_max_length
             )
             dataset_dict["instances"] = instances
             # dataset_dict["instances"] = det_utils.filter_empty_instances(instances)
@@ -141,7 +148,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
             dataset_dicts = copy.deepcopy(dataset_dicts)  # it will be modified by code below
             dataset_dict = copy_paste_mix_images(dataset_dicts,
                                                  format=self.image_format,
-                                                 max_size=self.max_size_train)
+                                                 max_size=self.max_size_train,
+                                                 augmentations=self.per_image_augmentations)
             image = dataset_dict["image"]
             aug_input = T.AugInput(image, sem_seg=None)
             transforms = self.augmentations(aug_input)
@@ -179,7 +187,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                     if obj.get("iscrowd", 0) == 0
                 ]
                 instances = det_utils.annotations_to_instances(
-                    annos, image_shape, digit_only=self.digit_only
+                    annos, image_shape, digit_only=self.digit_only,
+                    seq_max_length=self.seq_max_length
                 )
                 dataset_dict["instances"] = instances
                 # dataset_dict["instances"] = det_utils.filter_empty_instances(instances)

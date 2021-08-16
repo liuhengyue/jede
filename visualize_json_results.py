@@ -45,10 +45,14 @@ def create_instances(predictions, image_size, p_conf_threshold=0, d_conf_thresho
     scores = torch.as_tensor([p["score"] for p in person_predictions])
     keypoints = torch.as_tensor([p["keypoints"] for p in person_predictions]).view(-1, 17, 3)
     labels = torch.as_tensor([p["category_id"] for p in person_predictions], dtype=torch.long)
+    jersey_numbers = [torch.as_tensor(p["jersey_number"]) for p in person_predictions]
+    jersey_number_scores = [torch.as_tensor(p["jersey_number_score"]) for p in person_predictions]
     ret.scores = scores
     ret.pred_boxes = Boxes(boxes)
     ret.pred_classes = labels
     ret.pred_keypoints = Keypoints(keypoints)
+    ret.jersey_numbers = jersey_numbers
+    ret.jersey_number_scores = jersey_number_scores
     # process digit predictions
     num_instances = len(ret)
     boxes = [[] for _ in range(num_instances)]

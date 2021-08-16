@@ -113,7 +113,7 @@ def fast_rcnn_inference(boxes, scores, num_digits_scores, num_instances, image_s
 
 def fast_rcnn_inference_single_image(
     boxes, scores, num_digits_scores, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
-    per_class_nms=True, number_score_thresh=0.5
+    per_class_nms=True, number_score_thresh=0.1
 ):
     """
     Single-image inference. Return bounding-box detection results by thresholding

@@ -1,0 +1,15 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
+  ROI_DIGIT_NECK:
+    NORM: "GN"
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: "GN"
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+INPUT:
+  AUG:
+    COPY_PASTE_MIX: 22
+    RANDCOLOR: True
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_gn_randcolor

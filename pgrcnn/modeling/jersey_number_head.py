@@ -50,7 +50,7 @@ class SequenceModel(nn.Module):
 
         """
         super().__init__()
-        self.max_length = 3
+        self.max_length = cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQ_MAX_LENGTH
         input_resolution = (input_shapes.height, input_shapes.width)
         self.seq_resolution = cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQUENCE_RESOLUTION
         in_channels = input_shapes.channels
@@ -89,13 +89,29 @@ class SequenceModel(nn.Module):
         pred_lenghs = torch.as_tensor([predictions.size(0)] * predictions.size(1))
         # gt_numbers = [gt_num for p in proposals for x in p.gt_number_classes for gt_num in x if gt_num.numel()]
         # gt_lengths = torch.as_tensor([x.numel() for x in gt_numbers], dtype=torch.long, device=predictions.device)
-        gt_lengths = torch.cat([p.gt_number_lengths.view(-1) for p in proposals])
-        gt_seq = torch.cat([p.gt_number_sequences.view(-1, self.max_length) for p in proposals])
-        valid = gt_lengths > 0
-        gt_lengths = gt_lengths[valid]
-        gt_seq  = gt_seq[valid]
-        if not gt_lengths.numel(): # no valid or no gt
+        # if we have no instance
+        gt_number_classes = torch.cat([torch.cat(p.gt_number_classes)
+                                               if len(p.gt_number_classes)
+                                               else torch.empty((0,), dtype=torch.long, device=predictions.device)
+                                                for p in proposals]) # 0 is bg
+        try:
+            gt_lengths = torch.cat([torch.cat(p.gt_number_lengths)
+                                    if len(p.gt_number_lengths)
+                                    else torch.empty((0,), dtype=torch.long, device=predictions.device)
+                                    for p in proposals])
+        except:
+            pass
+        gt_seq = torch.cat([torch.cat(p.gt_number_sequences)
+                            if len(p.gt_number_sequences)
+                            else torch.empty((0, self.max_length), dtype=torch.long, device=predictions.device)
+                            for p in proposals])
+        valid = gt_number_classes > 0
+        if valid.sum() == 0: # no valid or no gt
             return {"number_loss": predictions.sum() * 0}
+        gt_lengths = gt_lengths[valid]
+        gt_seq = gt_seq[valid]
+        pred_lenghs = pred_lenghs[valid]
+        predictions = predictions[:, valid, :]
         loss = F.ctc_loss(predictions, gt_seq, pred_lenghs, gt_lengths, zero_infinity=True)
         return {"number_loss": loss}
 
@@ -133,25 +149,45 @@ class SequenceModel(nn.Module):
             return char_list
 
         N, T = pred_classes.size()
-        decoded_preds = []
-        for i in range(N):
-            decoded_preds.append(_decode(pred_classes[i], self.max_length))
-        return decoded_preds
+        if not N:
+            return torch.empty((0,), device=pred_classes.device)
+        assert N == 1
+        return _decode(pred_classes[0], self.max_length)
+        # decoded_preds = []
+        # for i in range(N):
+        #     decoded_preds.append(_decode(pred_classes[i], self.max_length))
+        # return decoded_preds
 
     def inference(self, predictions, proposals):
         # select max probability (greedy decoding) then decode index to character
         preds_prob = F.softmax(predictions, dim=2)
         preds_max_prob, preds_index = preds_prob.max(dim=2)
         confidence_scores = preds_max_prob.cumprod(dim=1)[:, -1]
-        num_proposals = [len(p) for p in proposals]
+        # num_proposals = [len(p) for p in proposals]
+        # list of lists
+        num_proposals_all = [[len(b) for b in p.proposal_number_boxes] for p in proposals]
+        num_proposals = [sum(p) for p in num_proposals_all]
         preds_index = torch.split(preds_index, num_proposals)
-        confidence_scores = torch.split(confidence_scores, num_proposals)
-        texts = [] # list of lists
-        for preds_index_per_image in preds_index:
-            texts.append(self.ctc_decode(preds_index_per_image))
-        for i in range(len(proposals)):
-            proposals[i].pred_jersey_numbers = texts[i]
-            proposals[i].pred_jersey_numbers_scores = confidence_scores[i]
+        confidence_scores = [list(torch.split(score, num_p)) for score, num_p in zip(torch.split(confidence_scores, num_proposals), num_proposals_all)]
+        labels_all = [] # list of lists
+
+        for num_proposals_per_image, preds_index_per_image in \
+            zip(num_proposals_all, preds_index):
+            labels = []
+            # could contain empty tensors
+            pred_per_instance = torch.split(preds_index_per_image, num_proposals_per_image)
+            for pred in pred_per_instance:
+                labels.append(self.ctc_decode(pred))
+            labels_all.append(labels)
+
+        # for preds_index_per_image in preds_index:
+        #     texts.append(self.ctc_decode(preds_index_per_image))
+        try:
+            for i in range(len(proposals)):
+                proposals[i].pred_jersey_numbers = labels_all[i]
+                proposals[i].pred_jersey_numbers_scores = confidence_scores[i]
+        except:
+            pass
         return proposals
 
 
