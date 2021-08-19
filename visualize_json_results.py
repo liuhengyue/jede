@@ -2,6 +2,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
 import json
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 import torch
@@ -19,6 +20,18 @@ from pgrcnn.structures import Players, Boxes
 
 
 def create_instances(predictions, image_size, p_conf_threshold=0, d_conf_threshold=0, digit_only=False):
+    """
+
+    Args:
+        predictions: the predictions for a single image, in the order of person, digit, jersey
+        image_size:
+        p_conf_threshold:
+        d_conf_threshold:
+        digit_only:
+
+    Returns:
+
+    """
     if digit_only:
         ret = Instances(image_size)
         if not len(predictions):
@@ -35,47 +48,58 @@ def create_instances(predictions, image_size, p_conf_threshold=0, d_conf_thresho
         ret.pred_classes = labels
         ret = ret[ret.scores > p_conf_threshold]
         return ret
-    ret = Players(image_size)
     # add fields
-    # labels = [dataset_id_map(p["category_id"]) for p in predictions]
-    person_predictions = [p for p in predictions if p["category_id"] == 0]
-    digit_predictions = [p for p in predictions if p["category_id"] > 0]
-    # process person
-    boxes = BoxMode.convert(torch.as_tensor([p["bbox"] for p in person_predictions]), BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    person_inds = [i for i, p in enumerate(predictions) if "person_bbox" in p["tasks"]] + [len(predictions)]
+    predictions = [predictions[person_inds[i-1]:person_inds[i]] for i in range(1, len(person_inds))]
+    instances = []
+    for pred in predictions:
+        single_instance = create_single_instance(pred, image_size)
+        instances.append(single_instance)
+    instances = Players.cat(instances)
+    # filter low confident person detection
+    instances = instances[instances.scores > p_conf_threshold]
+    return instances
+
+def create_single_instance(predictions, image_size):
+    """
+
+    Args:
+        predictions: list of coco results for a single instance
+        image_size:
+
+    Returns:
+
+    """
+    ret = Players(image_size)
+    person_predictions = [p for p in predictions if "person_bbox" in p['tasks']]
+    boxes = BoxMode.convert(torch.as_tensor([p["bbox"] for p in person_predictions]), BoxMode.XYWH_ABS,
+                            BoxMode.XYXY_ABS)
     scores = torch.as_tensor([p["score"] for p in person_predictions])
-    keypoints = torch.as_tensor([p["keypoints"] for p in person_predictions]).view(-1, 17, 3)
+    keypoints = torch.as_tensor([p["full_keypoints"] for p in person_predictions]).view(-1, 17, 3)
     labels = torch.as_tensor([p["category_id"] for p in person_predictions], dtype=torch.long)
-    jersey_numbers = [torch.as_tensor(p["jersey_number"]) for p in person_predictions]
-    jersey_number_scores = [torch.as_tensor(p["jersey_number_score"]) for p in person_predictions]
     ret.scores = scores
     ret.pred_boxes = Boxes(boxes)
     ret.pred_classes = labels
     ret.pred_keypoints = Keypoints(keypoints)
-    ret.jersey_numbers = jersey_numbers
-    ret.jersey_number_scores = jersey_number_scores
     # process digit predictions
-    num_instances = len(ret)
-    boxes = [[] for _ in range(num_instances)]
-    labels = [[] for _ in range(num_instances)]
-    scores = [[] for _ in range(num_instances)]
-    for p in digit_predictions:
-        bbox = BoxMode.convert(torch.as_tensor([p["bbox"]]), BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-        score = torch.as_tensor([p["score"]])
-        label = torch.as_tensor([p["category_id"]], dtype=torch.long)
-        boxes[p["match_id"]].append(Boxes(bbox))
-        labels[p["match_id"]].append(label)
-        scores[p["match_id"]].append(score)
-    boxes = [Boxes.cat(bboxes_list) if len(bboxes_list) else Boxes(torch.empty((0, 4), dtype=torch.float32)) for bboxes_list in boxes]
-    labels = [torch.cat(labels_list) if len(labels_list) else torch.empty((0,), dtype=torch.long) for labels_list in labels]
-    scores = [torch.cat(scores_list) if len(scores_list) else torch.empty((0,), dtype=torch.float32) for scores_list in scores]
-    ret.digit_scores = scores
-    ret.pred_digit_boxes = boxes
-    ret.pred_digit_classes = labels
-
-    # filter low confident person detection
-    ret = ret[ret.scores > p_conf_threshold]
+    digit_predictions = [p for p in predictions if "digit_bbox" in p['tasks']]
+    boxes = np.asarray([p['bbox'] for p in digit_predictions]).reshape(-1, 4)
+    boxes = BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    labels = np.asarray([p['category_id'] for p in digit_predictions])
+    scores = np.asarray([p['score'] for p in digit_predictions])
+    ret.digit_scores = [torch.as_tensor(scores)]
+    ret.pred_digit_boxes = [Boxes(boxes)]
+    ret.pred_digit_classes = [torch.as_tensor(labels)]
+    # process jersey number predictions
+    number_predictions = [p for p in predictions if "jersey_number" in p['tasks']]
+    boxes = np.asarray([p['bbox'] for p in number_predictions]).reshape(-1, 4)
+    boxes = BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    labels = np.asarray([p['category_id'] for p in number_predictions])
+    scores = np.asarray([p['score'] for p in number_predictions])
+    ret.pred_number_boxes = [Boxes(boxes)]
+    ret.pred_number_classes = [torch.as_tensor(labels)]
+    ret.pred_number_scores = [torch.as_tensor(scores)]
     return ret
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -127,7 +151,7 @@ if __name__ == "__main__":
         basename = os.path.basename(dic["file_name"])
         basename_wo_extension = os.path.splitext(basename)[0]
 
-        predictions = create_instances(pred_by_image[dic["image_id"]], img.shape[:2],
+        preds = create_instances(pred_by_image[dic["image_id"]], img.shape[:2],
                                        p_conf_threshold=args.p_conf_threshold,
                                        d_conf_threshold=args.d_conf_threshold,
                                        digit_only=cfg.DATASETS.DIGIT_ONLY)
@@ -140,6 +164,6 @@ if __name__ == "__main__":
         # vis_gt.get_output().save(os.path.join(args.output, "{}_gt.pdf".format(basename_wo_extension)))
 
         vis = JerseyNumberVisualizer(img, metadata, montage=True, nrows=1, ncols=2)
-        vis.draw_montage(predictions, dic)
+        vis.draw_montage(preds, dic)
         vis.get_output().save(os.path.join(args.output, "{}_montage.pdf".format(basename_wo_extension)))
 

@@ -16,10 +16,12 @@ from fvcore.common.file_io import PathManager, file_lock
 from detectron2.data import DatasetCatalog, MetadataCatalog
 logger = logging.getLogger(__name__)
 # fmt: off
-CLASS_NAMES = [
-    'person', '0', '1', '2', '3',
-    '4', '5', '6', '7', '8', '9'
-]
+# CLASS_NAMES = [
+#     'person', '0', '1', '2', '3',
+#     '4', '5', '6', '7', '8', '9'
+# ]
+
+CLASS_NAMES = ['person'] + [str(i) for i in range(100)]
 # follow the name in COCO, if only use 4 keypoints
 # KEYPOINT_NAMES = ["left_shoulder", "right_shoulder", "right_hip", "left_hip"]
 # KEYPOINT_CONNECTION_RULES = [
@@ -135,6 +137,12 @@ def get_dicts(data_dir, anno_dir, split=None, digit_only=False, num_images=-1):
             annotations[i]['annotations'][j]['bbox_mode'] = BoxMode.XYXY_ABS
             annotations[i]['annotations'][j]['digit_ids'] = \
                 [CLASS_NAMES.index(str(digit)) for digit in annotations[i]['annotations'][j]['digit_labels']]
+            # add jersey number box and ids
+            digit_bboxes = annotations[i]['annotations'][j]['digit_bboxes']
+            annotations[i]['annotations'][j]['number_bbox'] = get_union_box(digit_bboxes)
+            number_id = ''.join([str(digit) for digit in annotations[i]['annotations'][j]['digit_labels']])
+            number_id = CLASS_NAMES.index(number_id) if number_id else -1
+            annotations[i]['annotations'][j]['number_id'] = number_id
     if num_images > 0:
         # fixed order
         annotations = annotations[:num_images]
@@ -143,6 +151,25 @@ def get_dicts(data_dir, anno_dir, split=None, digit_only=False, num_images=-1):
 
     return annotations
 
+def get_union_box(digit_bboxes):
+    """
+
+    Args:
+        digit_bboxes: List[List[4 int]]
+
+    Returns:
+        number_bbox: List[4 int]
+    """
+    if len(digit_bboxes) == 0:
+        return digit_bboxes
+    if len(digit_bboxes) == 1:
+        return digit_bboxes[0]
+    digit_bboxes_np = np.asarray(digit_bboxes) # (N, 4)
+    x1 = digit_bboxes_np[:, 0].min().item()
+    y1 = digit_bboxes_np[:, 1].min().item()
+    x2 = digit_bboxes_np[:, 2].max().item()
+    y2 = digit_bboxes_np[:, 3].max().item()
+    return [x1, y1, x2, y2]
 
 
 def get_statistics(annotations):

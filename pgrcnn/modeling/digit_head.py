@@ -166,10 +166,9 @@ def fast_rcnn_inference_single_image(
     result.pred_digit_boxes = boxes
     result.digit_scores = scores
     result.pred_digit_classes = cls_ids
-    result.proposal_number_boxes = [b[s > number_score_thresh].union()
-                                    for b, s in zip(boxes, scores)]
-    # result.pred_jersey_numbers = number_preds
-    # result.pred_jersey_numbers_scores = number_scores
+    # result.proposal_number_boxes = [b[s > number_score_thresh].union()
+    #                                 for b, s in zip(boxes, scores)]
+
 
 
     return result, filter_inds[:, 0]

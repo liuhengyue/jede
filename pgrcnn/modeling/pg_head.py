@@ -285,13 +285,30 @@ class PGROIHeads(BaseROIHeads):
             num_instances = [len(instance) for instance in instances]
             detection_boxes = list(detection[..., :4].split(num_instances))
             detection_ct_classes = list(detection[..., -1].split(num_instances))
+            if self.enable_jersey_number_neck:
+                center_heatmaps, scale_heatmaps, offset_heatmaps = self.jersey_number_neck(fused_features)
+                detection = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
+                                         reg=offset_heatmaps,
+                                         K=self.num_proposal_test,
+                                         size_target_type=self.size_target_type,
+                                         size_target_scale=self.size_target_scale,
+                                         training=False,
+                                         offset=self.offset_test
+                                         )
+                detection_number_boxes = list(detection[..., :4].split(num_instances))
             # assign new fields to instances
             for i, (boxes, detection_ct_cls) in enumerate(zip(detection_boxes, detection_ct_classes)):
-                # perform a person roi clip
+                # perform a person roi clip or not
                 boxes = [Boxes(b) for b in boxes] # List of N `Boxes'
                 pred_person_boxes = instances[i].pred_boxes # [N, 4]
-                boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[i])] for i, boxes_per_ins in enumerate(boxes)]
+                boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[j])] for j, boxes_per_ins in enumerate(boxes)]
                 instances[i].proposal_digit_boxes = boxes
+                if self.enable_jersey_number_neck:
+                    number_boxes = [Boxes(b) for b in detection_number_boxes[i]]
+                    number_boxes = [boxes_per_ins[inside_matched_box(boxes_per_ins, pred_person_boxes[j])] for j, boxes_per_ins
+                             in enumerate(number_boxes)]
+                    instances[i].pred_number_boxes = number_boxes
+
             return instances
 
     def _forward_digit_box(self, features, proposals):
@@ -336,7 +353,7 @@ class PGROIHeads(BaseROIHeads):
                                for p in proposals]
                 detection_boxes = dummy_boxes
         else:
-            detection_boxes = [Boxes.cat(p.proposal_number_boxes) for p in proposals]
+            detection_boxes = [Boxes.cat(p.pred_number_boxes) for p in proposals]
             # detection_boxes = [Boxes.cat(p.pred_digit_boxes).union() for p in proposals]
             # for number_boxes, p in zip(detection_boxes, proposals):
             #     p.proposal_number_boxes = number_boxes

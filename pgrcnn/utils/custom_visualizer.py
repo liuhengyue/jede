@@ -34,6 +34,7 @@ _LARGE_MASK_AREA_THRESH = 120000
 _OFF_WHITE = (1.0, 1.0, 240.0 / 255)
 _BLACK = (0, 0, 0)
 _DARK_GRAY = (0.2, 0.2, 0.2)
+_MID_GRAY = (0.5, 0.5, 0.5)
 _RED = (1.0, 0, 0)
 
 _KEYPOINT_THRESHOLD = 0.05
@@ -242,8 +243,9 @@ class JerseyNumberVisualizer(Visualizer):
             "digit_bboxes": Boxes.cat(data.pred_digit_boxes).tensor.numpy() if data.has('pred_digit_boxes') else np.empty((0, 4)),
             "digit_ids": torch.cat(data.pred_digit_classes).numpy() if data.has('pred_digit_classes') else np.empty((0,)),
             "digit_scores": torch.cat(data.digit_scores).numpy() if data.has('digit_scores') else np.empty((0,)),
-            "jersey_numbers": data.jersey_numbers[0].numpy() if data.has('jersey_numbers') else np.empty((0,)),
-            "jersey_number_scores": data.jersey_number_scores[0].numpy() if data.has('jersey_number_scores') else np.empty((0,)),
+            "number_bbox": Boxes.cat(data.pred_number_boxes).tensor.numpy() if data.has('pred_number_boxes') else np.empty((0, 4)),
+            "number_id": torch.cat(data.pred_number_classes).numpy() if data.has('pred_number_classes') else np.empty((0,)),
+            "number_score": torch.cat(data.pred_number_scores).numpy() if data.has('pred_number_scores') else np.empty((0,)),
             })
         return instances_list
 
@@ -310,10 +312,14 @@ class JerseyNumberVisualizer(Visualizer):
             scores = instance.get("scores", None)
             digit_scores = instance.get("digit_scores", None)
             # get jersey number predictions
-            jersey_numbers = instance.get("jersey_numbers", instance.get("digit_ids", None))
-            jersey_scores = instance.get("jersey_number_scores", None)
-            labels = _create_person_labels(category_id, scores, jersey_numbers, jersey_scores, self.metadata.get("thing_classes", None))
+            number_bbox = np.array(instance.get("number_bbox", np.empty((0, 4))))
+            number_id = np.array([instance.get("number_id")]) if "number_id" in instance else np.empty((0,))
+            number_id = number_id.reshape(-1).tolist()
+            number_score = instance.get("number_score", None)
+            # labels = _create_person_labels(category_id, scores, jersey_numbers, jersey_scores, self.metadata.get("thing_classes", None))
+            labels = _create_text_labels(category_id, scores, self.metadata.get("thing_classes", None))
             digit_labels = _create_text_labels(digit_ids, digit_scores, self.metadata.get("thing_classes", None))
+            number_labels = _create_text_labels(number_id, number_score, self.metadata.get("thing_classes", None))
 
             keypoints = pad_full_keypoints(keypoints)
             # no corresponding keypoint annotation
@@ -327,10 +333,15 @@ class JerseyNumberVisualizer(Visualizer):
                 person_bbox = [BoxMode.convert(person_bbox, bbox_mode, BoxMode.XYXY_ABS)]
                 digit_bboxes = [BoxMode.convert(each_digit_bbox, bbox_mode, BoxMode.XYXY_ABS) for
                            each_digit_bbox in digit_bboxes]
+                number_bbox = [BoxMode.convert(number_bbox, bbox_mode, BoxMode.XYXY_ABS)]
 
             if len(labels):
                 person_colors = [_RED for _ in range(len(labels))]
                 self.overlay_instances(labels=labels, boxes=person_bbox, masks=None, keypoints=keypoints, assigned_colors=person_colors)
+                if len(number_labels):
+                    number_colors = [_MID_GRAY for _ in range(len(number_labels))]
+                    self.overlay_instances(labels=number_labels, boxes=number_bbox, masks=None, keypoints=None,
+                                           assigned_colors=number_colors, pos="up_mid")
             if len(digit_labels):
                 self.overlay_instances(labels=digit_labels, boxes=digit_bboxes, masks=None, keypoints=None)
             return self.output
@@ -347,7 +358,8 @@ class JerseyNumberVisualizer(Visualizer):
         masks=None,
         keypoints=None,
         assigned_colors=None,
-        alpha=1.0
+        alpha=1.0,
+        pos="default"
     ):
         """
         Args:
@@ -437,7 +449,7 @@ class JerseyNumberVisualizer(Visualizer):
                 # first get a box
                 if boxes is not None:
                     x0, y0, x1, y1 = boxes[i]
-                    text_pos = (x0, y0)  # if drawing boxes, put text on the box corner.
+                    text_pos = (x0, y0) # if drawing boxes, put text on the box corner.
                     horiz_align = "left"
                 elif masks is not None:
                     x0, y0, x1, y1 = masks[i].bbox()
@@ -466,6 +478,11 @@ class JerseyNumberVisualizer(Visualizer):
                     * 0.5
                     * self._default_font_size
                 )
+                if pos == "up_mid":
+                    horiz_align = "center"
+                    shift = max(self._default_font_size / 4, 1) * self.output.scale * 1.2
+                    num_rows = int('\n' in labels[i]) + 1
+                    text_pos = ((x0 + x1) / 2, y0 - font_size * num_rows - shift)
                 self.draw_text(
                     labels[i],
                     text_pos,

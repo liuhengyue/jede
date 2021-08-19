@@ -55,7 +55,7 @@ class SequenceModel(nn.Module):
         self.seq_resolution = cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQUENCE_RESOLUTION
         in_channels = input_shapes.channels
         hidden_size = 256
-        self.num_class = 10 + 1
+        self.num_class = cfg.MODEL.ROI_DIGIT_NECK.NUM_DIGIT_CLASSES + 1
         self.context = nn.Sequential(
             BidirectionalLSTM(in_channels, hidden_size, hidden_size),
             BidirectionalLSTM(hidden_size, hidden_size, hidden_size)
@@ -94,13 +94,11 @@ class SequenceModel(nn.Module):
                                                if len(p.gt_number_classes)
                                                else torch.empty((0,), dtype=torch.long, device=predictions.device)
                                                 for p in proposals]) # 0 is bg
-        try:
-            gt_lengths = torch.cat([torch.cat(p.gt_number_lengths)
-                                    if len(p.gt_number_lengths)
-                                    else torch.empty((0,), dtype=torch.long, device=predictions.device)
-                                    for p in proposals])
-        except:
-            pass
+        gt_lengths = torch.cat([torch.cat(p.gt_number_lengths)
+                                if len(p.gt_number_lengths)
+                                else torch.empty((0,), dtype=torch.long, device=predictions.device)
+                                for p in proposals])
+
         gt_seq = torch.cat([torch.cat(p.gt_number_sequences)
                             if len(p.gt_number_sequences)
                             else torch.empty((0, self.max_length), dtype=torch.long, device=predictions.device)
@@ -122,7 +120,7 @@ class SequenceModel(nn.Module):
             pred_classes (torch.Tensor): shape (N x T) contains tensor of predicted class ids
 
         Returns:
-
+            list of torch.Tensor of size N
         """
         def _decode(pred_seq, max_length):
             """
@@ -132,7 +130,7 @@ class SequenceModel(nn.Module):
                 max_length: the maximum length of prediction
 
             Returns:
-                char_list: a predicted sequence of
+                char_list: tensor padded to max_length, a predicted sequence of a single instance
             """
             t = pred_seq.numel()
             char_list = []
@@ -142,21 +140,19 @@ class SequenceModel(nn.Module):
                         and (not (i > 0 and pred_seq[i - 1] == pred_seq[i]))\
                         and len(char_list) < max_length: # should have a better way
                     char_list.append(pred_seq[i])
-            if len(char_list):
-                char_list = torch.stack(char_list)
-            else:
-                char_list = torch.empty((0,), device=pred_seq.device)
+            pad = max_length - len(char_list)
+            char_list += [torch.as_tensor(0, dtype=torch.long, device=pred_seq.device)] * pad
+            char_list = torch.stack(char_list)
             return char_list
 
+        decoded_preds = []
         N, T = pred_classes.size()
         if not N:
-            return torch.empty((0,), device=pred_classes.device)
-        assert N == 1
-        return _decode(pred_classes[0], self.max_length)
-        # decoded_preds = []
-        # for i in range(N):
-        #     decoded_preds.append(_decode(pred_classes[i], self.max_length))
-        # return decoded_preds
+            return decoded_preds #torch.empty((0,), device=pred_classes.device)
+        for i in range(N):
+            decoded_preds.append(_decode(pred_classes[i], self.max_length))
+        decoded_preds = torch.stack(decoded_preds)
+        return decoded_preds
 
     def inference(self, predictions, proposals):
         # select max probability (greedy decoding) then decode index to character
@@ -165,29 +161,22 @@ class SequenceModel(nn.Module):
         confidence_scores = preds_max_prob.cumprod(dim=1)[:, -1]
         # num_proposals = [len(p) for p in proposals]
         # list of lists
-        num_proposals_all = [[len(b) for b in p.proposal_number_boxes] for p in proposals]
+        num_proposals_all = [[len(b) for b in p.pred_number_boxes] for p in proposals]
         num_proposals = [sum(p) for p in num_proposals_all]
         preds_index = torch.split(preds_index, num_proposals)
         confidence_scores = [list(torch.split(score, num_p)) for score, num_p in zip(torch.split(confidence_scores, num_proposals), num_proposals_all)]
         labels_all = [] # list of lists
 
-        for num_proposals_per_image, preds_index_per_image in \
-            zip(num_proposals_all, preds_index):
+        for i, (num_proposals_per_image, preds_index_per_image) in \
+            enumerate(zip(num_proposals_all, preds_index)):
             labels = []
             # could contain empty tensors
             pred_per_instance = torch.split(preds_index_per_image, num_proposals_per_image)
             for pred in pred_per_instance:
                 labels.append(self.ctc_decode(pred))
-            labels_all.append(labels)
+            proposals[i].pred_number_classes = labels
+            proposals[i].pred_number_scores = confidence_scores[i]
 
-        # for preds_index_per_image in preds_index:
-        #     texts.append(self.ctc_decode(preds_index_per_image))
-        try:
-            for i in range(len(proposals)):
-                proposals[i].pred_jersey_numbers = labels_all[i]
-                proposals[i].pred_jersey_numbers_scores = confidence_scores[i]
-        except:
-            pass
         return proposals
 
 

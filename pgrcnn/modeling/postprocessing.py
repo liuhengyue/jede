@@ -39,6 +39,12 @@ def pgrcnn_postprocess(results, output_height, output_width, mask_threshold=0.5)
             digit_output_box.scale(scale_x, scale_y)
             digit_output_box.clip(results.image_size)
 
+    # number output, could be shape 0 tensor
+    if results.has("pred_number_boxes"):
+        for box in results.pred_number_boxes:
+            box.scale(scale_x, scale_y)
+            box.clip(results.image_size)
+
     # list can not be indexed by tensor, so convert to list of ints
 
     results = results[output_boxes.nonempty()]

@@ -60,130 +60,44 @@ class JerseyNumberEvaluator(COCOEvaluator):
         self._tasks = self._tasks_from_config(cfg)
         self._distributed = distributed
         self._output_dir = output_dir
+        self.dataset_name = dataset_name
+        self.output_dir = output_dir
 
         self._cpu_device = torch.device("cpu")
         self._logger = logging.getLogger(__name__)
 
         self._metadata = MetadataCatalog.get(dataset_name)
-        if not hasattr(self._metadata, "json_file"):
-            self._logger.warning(f"json_file was not found in MetaDataCatalog for '{dataset_name}'")
-
-            cache_path = os.path.join(output_dir, f"{dataset_name}_coco_format.json")
-            self._metadata.json_file = cache_path
-            # this function is modified
-            convert_to_coco_json(dataset_name, cache_path, allow_cached=False) # delete previous converted coco json
-
-        json_file = PathManager.get_local_path(self._metadata.json_file)
-        with contextlib.redirect_stdout(io.StringIO()):
-            self._coco_api = COCO(json_file)
 
         self._kpt_oks_sigmas = cfg.TEST.KEYPOINT_OKS_SIGMAS
-        # Test set json files do not contain annotations (evaluation must be
-        # performed using the COCO evaluation server).
-        self._do_evaluation = "annotations" in self._coco_api.dataset
         self.digit_only = cfg.DATASETS.DIGIT_ONLY
         self.keypoints_inds = cfg.DATASETS.KEYPOINTS_INDS
 
-    def _filter_coco_results(self, coco_gt, coco_results, task_type):
-        # determine pg rcnn or other models
-        digit_gt_only = True
-        # determine the eval type
-        person_only = (task_type in ["jersey_number", "person_bbox", "keypoints"])
+    def _coco_by_task(self, task_name):
+        json_file_name = task_name + "_json_file"
 
-        # hack COCO object
-        coco_gt_copy = copy.deepcopy(coco_gt)
-        # modify 'cats'
-        for k, v in coco_gt.cats.items():
-            if v['name'] == "person":
-                person_id = k
-                digit_gt_only = False
-            if v['name'] == "person" and (not person_only):
-                del coco_gt_copy.cats[k]  # remove person cls
-            if v['name'] != "person" and person_only:
-                del coco_gt_copy.cats[k]
-        # if only find digit classes, do not modify
-        if digit_gt_only:
-            return coco_gt, coco_results
-        # modify coco results by using only 4 keypoints
-        if task_type == "keypoints":
-            for i, coco_result in enumerate(coco_results):
-                if "keypoints" in coco_result:
-                    # only gather the 4 keypoints for evaluation
-                    coco_results[i]["keypoints"] =\
-                        [coco_result["keypoints"][idx * 3 + shift] for idx in self.keypoints_inds for shift in range(3)]
+        # check if it is digit only
+        # digit_only = 'person' not in [cat['name'] for cat in categories]
+        if not hasattr(self._metadata, json_file_name):
+            self._logger.warning(f"json_file was not found in MetaDataCatalog for '{self.dataset_name}'")
 
-        # modify 'anns'
-        for k, v in coco_gt.anns.items():
-            if v['category_id'] == person_id and (not person_only):
-                del coco_gt_copy.anns[k]
-            if v['category_id'] != person_id and (person_only):
-                del coco_gt_copy.anns[k]
-        # 'catToImgs
-        if person_only:
-            for k in coco_gt.catToImgs.keys():
-                if k != 'default_factory':
-                    if k == person_id and (not person_only):
-                        del coco_gt_copy.catToImgs[k]
-                    if k != person_id and (person_only):
-                        del coco_gt_copy.catToImgs[k]
-        # 'imgToAnns'
-        for k, v in coco_gt.imgToAnns.items():
-            i_to_keep = []
-            for i, ann in enumerate(v):
-                if ann['category_id'] != person_id and (not person_only):
-                    i_to_keep.append(i)
-                if ann['category_id'] == person_id and (person_only):
-                    i_to_keep.append(i)
-            coco_gt_copy.imgToAnns[k] = [coco_gt_copy.imgToAnns[k][i] for i in i_to_keep]
+            cache_path = os.path.join(self.output_dir, f"{self.dataset_name}_{task_name}_coco_format.json")
+            self._metadata.set(**{json_file_name: cache_path})
+            # this function is modified
+            convert_to_coco_json(self.dataset_name, cache_path, task_name, allow_cached=False) # delete previous converted coco json
 
+        json_file = PathManager.get_local_path(self._metadata.get(json_file_name))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self._coco_api = COCO(json_file)
+        class_names =  [v['name'] for v in self._coco_api.cats.values()]
+        return class_names
 
-        if task_type == "jersey_number":
-            # add double-digit number cats
-            modified_cats = copy.deepcopy(coco_gt.cats)
-            name_to_id = {v['name']: v['id'] for v in coco_gt.cats.values()}
-            for cat_id_i, k_i in coco_gt.cats.items():
-                for cat_id_j, k_j in coco_gt.cats.items():
-                    if cat_id_i != 0 and cat_id_j !=0:
-                        new_id = int(str(name_to_id[k_i['name']]) + str(name_to_id[k_j['name']]))
-                        new_name = k_i['name'] + k_j['name']
-                        modified_cats.update({new_id: {'id': new_id, 'name':new_name}})
-            coco_gt_copy.cats = modified_cats
-            # modify dataset categories
-            coco_gt_copy.dataset["categories"] = list(modified_cats.values())
-            new_catToImgs = defaultdict(list)
-            # add ignore flags for those person boxes without jersey number
-            for k, v in coco_gt_copy.anns.items():
-                jersey_number = coco_gt_copy.anns[k]["jersey_number"]
-                if len(jersey_number) > 0:
-                    jersey_id = int(''.join([str(jn) for jn in jersey_number]))
-                    coco_gt_copy.anns[k]["ignore"] = 0
-                    coco_gt_copy.anns[k]["category_id"] = jersey_id
-                    new_catToImgs[jersey_id].append(coco_gt_copy.anns[k]["image_id"])
-                else:
-                    coco_gt_copy.anns[k]["ignore"] = 1
-                    new_catToImgs[person_id].append(coco_gt_copy.anns[k]["image_id"])
-            coco_gt_copy.catToImgs = new_catToImgs
-            # modify detections
-            modified_coco_results = []
-            for i, coco_result in enumerate(coco_results):
-                if coco_result["category_id"] == person_id:
-                    jersey_number = coco_result["jersey_number"]
-                    if len(jersey_number) > 0:
-                        cat_id = int(''.join([str(jn) for jn in jersey_number]))
-                        if cat_id in modified_cats:
-                            coco_result["category_id"] = cat_id
-                    # coco_result["category_id"] = 1
-                    modified_coco_results.append(coco_result)
-            return coco_gt_copy, modified_coco_results
+    def _filter_coco_results(self, coco_results, task_type):
+        filtered_coco_results = []
+        for result in coco_results:
+            if task_type in result["tasks"]:
+                filtered_coco_results.append(result)
+        return filtered_coco_results
 
-        if person_only:
-            return coco_gt_copy, [coco_result for coco_result in coco_results if
-                                  coco_result["category_id"] == person_id]
-        elif task_type == "digit_bbox":
-            return coco_gt_copy, [coco_result for coco_result in coco_results if
-                                  coco_result["category_id"] != person_id]
-        else:
-            raise Exception("Unrecognized task_type.")
 
     def _evaluate_predictions_on_coco(self, coco_gt, coco_results, iou_type, kpt_oks_sigmas=None):
         """
@@ -195,19 +109,10 @@ class JerseyNumberEvaluator(COCOEvaluator):
         # pg rcnn iou_type options: [digit_bbox, person_bbox, keypoints]
         task_type = iou_type
         # iou_type = iou_type if iou_type == "keypoints" else "bbox"
-
-        if iou_type == "segm":
-            coco_results = copy.deepcopy(coco_results)
-            # When evaluating mask AP, if the results contain bbox, cocoapi will
-            # use the box area as the area of the instance, instead of the mask area.
-            # This leads to a different definition of small/medium/large.
-            # We remove the bbox field to let mask AP use mask area.
-            for c in coco_results:
-                c.pop("bbox", None)
         # we will modify the coco results
-        coco_results = copy.deepcopy(coco_results)
+        # coco_results = copy.deepcopy(coco_results)
         # filter results based on task_type
-        coco_gt, coco_results = self._filter_coco_results(coco_gt, coco_results, task_type)
+        # coco_gt, coco_results = self._filter_coco_results(coco_gt, coco_results, task_type)
 
         coco_dt = coco_gt.loadRes(coco_results)
         coco_eval = JerseyNumberEval(coco_gt, coco_dt, iou_type)
@@ -260,21 +165,26 @@ class JerseyNumberEvaluator(COCOEvaluator):
                 f.write(json.dumps(coco_results))
                 f.flush()
 
-        if not self._do_evaluation:
-            self._logger.info("Annotations are not available for evaluation.")
-            return
-
         self._logger.info("Evaluating predictions ...")
+        # tasks list: person_bbox, keypoints, jersey_number, digit_bbox
         for task in sorted(tasks):
+            class_names = self._coco_by_task(task)
+            filtered_coco_results = self._filter_coco_results(coco_results, task)
+            # Test set json files do not contain annotations (evaluation must be
+            # performed using the COCO evaluation server).
+            self._do_evaluation = "annotations" in self._coco_api.dataset
+            if not self._do_evaluation:
+                self._logger.info("Annotations are not available for evaluation.")
+                return
             coco_eval = (
                 self._evaluate_predictions_on_coco(
-                    self._coco_api, coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
+                    self._coco_api, filtered_coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
                 )
-                if len(coco_results) > 0
+                if len(filtered_coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
-            class_names = [v['name'] for v in coco_eval.cocoGt.cats.values()] \
-                if task == "jersey_number" else self._metadata.get("thing_classes")
+            # class_names = [v['name'] for v in coco_eval.cocoGt.cats.values()] \
+            #     if task == "jersey_number" else self._metadata.get("thing_classes")
             res = self._derive_coco_results(
                 coco_eval, task, class_names=class_names
             )
@@ -405,7 +315,11 @@ class JerseyNumberEvaluator(COCOEvaluator):
             # TODO this is ugly
             if "instances" in output:
                 instances = output["instances"].to(self._cpu_device)
-                prediction["instances"] = instances_to_coco_json(instances, input["image_id"], self.digit_only)
+                prediction["instances"] = instances_to_coco_json(instances,
+                                                                 input["image_id"],
+                                                                 self.digit_only,
+                                                                 self._metadata.get("thing_classes"),
+                                                                 self.keypoints_inds)
             if "proposals" in output:
                 prediction["proposals"] = output["proposals"].to(self._cpu_device)
             self._predictions.append(prediction)
@@ -440,7 +354,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
         return copy.deepcopy(self._results)
 
 
-def convert_to_coco_json(dataset_name, output_file, allow_cached=True):
+def convert_to_coco_json(dataset_name, output_file, task_name, allow_cached=True):
     """
     Converts dataset into COCO format and saves it to a json file.
     dataset_name must be registered in DatasetCatalog and in detectron2's standard format.
@@ -462,13 +376,13 @@ def convert_to_coco_json(dataset_name, output_file, allow_cached=True):
             logger.info(f"Cached annotations in COCO format already exist: {output_file}")
         else:
             logger.info(f"Converting dataset annotations in '{dataset_name}' to COCO format ...)")
-            coco_dict = convert_to_coco_dict(dataset_name)
+            coco_dict = convert_to_coco_dict(dataset_name, task_name)
 
             with PathManager.open(output_file, "w") as json_file:
                 logger.info(f"Caching annotations in COCO format: {output_file}")
                 json.dump(coco_dict, json_file)
 
-def convert_to_coco_dict(dataset_name):
+def convert_to_coco_dict(dataset_name, task_name):
     """
     Convert a dataset in detectron2's standard format into COCO json format
 
@@ -482,22 +396,154 @@ def convert_to_coco_dict(dataset_name):
         dataset_name:
             name of the source dataset
             must be registered in DatastCatalog and in detectron2's standard format
+        task_name:
+            available tasks: person_bbox, keypoints, jersey_number, digit_bbox
     Returns:
         coco_dict: serializable dict in COCO json format
     """
 
     dataset_dicts = DatasetCatalog.get(dataset_name)
-    categories = [
-        {"id": id, "name": name}
-        for id, name in enumerate(MetadataCatalog.get(dataset_name).thing_classes)
-    ]
-    # check if it is digit only
-    digit_only = 'person' not in [cat['name'] for cat in categories]
+    thing_classes = MetadataCatalog.get(dataset_name).thing_classes
 
-    logger.info("Converting dataset dicts into COCO format")
+    # check if it is digit only
+    # digit_only = 'person' not in [cat['name'] for cat in categories]
+
+    if task_name == 'digit_bbox':
+        class_names = [str(i) for i in range(10)]
+        categories = [
+            {"id": id, "name": name}
+            for id, name in enumerate(thing_classes)
+            if name in class_names
+        ]
+        return convert_digit_bbox_eval(dataset_dicts, categories)
+
+    elif task_name == 'jersey_number':
+        class_names = [str(i) for i in range(100)]
+        categories = [
+            {"id": id, "name": name}
+            for id, name in enumerate(thing_classes)
+            if name in class_names
+        ]
+        return convert_jersey_number_eval(dataset_dicts, categories)
+
+    else:
+        class_names = ["person"]
+        categories = [
+            {"id": id, "name": name}
+            for id, name in enumerate(thing_classes)
+            if name in class_names
+        ]
+        return convert_person_eval(dataset_dicts, categories)
+
+    # logger.info("Converting dataset dicts into COCO format")
+    # coco_images = []
+    # coco_annotations = []
+    #
+    # for image_id, image_dict in enumerate(dataset_dicts):
+    #     coco_image = {
+    #         "id": image_dict.get("image_id", image_id),
+    #         "width": image_dict["width"],
+    #         "height": image_dict["height"],
+    #         "file_name": image_dict["file_name"],
+    #     }
+    #     coco_images.append(coco_image)
+    #
+    #     anns_per_image = image_dict["annotations"]
+    #     for annotation in anns_per_image:
+    #         bbox_mode = annotation["bbox_mode"]
+    #         if not digit_only:
+    #             # add person annotation
+    #             coco_annotation = {}
+    #             bbox = annotation["person_bbox"]
+    #             bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
+    #             if "keypoints" in annotation:
+    #                 keypoints = annotation["keypoints"]  # list[int]
+    #                 for idx, v in enumerate(keypoints):
+    #                     if idx % 3 != 2:
+    #                         # COCO's segmentation coordinates are floating points in [0, H or W],
+    #                         # but keypoint coordinates are integers in [0, H-1 or W-1]
+    #                         # For COCO format consistency we substract 0.5
+    #                         # https://github.com/facebookresearch/detectron2/pull/175#issuecomment-551202163
+    #                         keypoints[idx] = v - 0.5
+    #                 if "num_keypoints" in annotation:
+    #                     num_keypoints = annotation["num_keypoints"]
+    #                 else:
+    #                     num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
+    #
+    #             # Computing areas using bounding boxes
+    #             bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    #             area = Boxes([bbox_xy]).area()[0].item()
+    #             # Add optional fields
+    #             if "keypoints" in annotation:
+    #                 coco_annotation["keypoints"] = keypoints
+    #                 coco_annotation["num_keypoints"] = num_keypoints
+    #
+    #             coco_annotation["id"] = len(coco_annotations) + 1
+    #             coco_annotation["image_id"] = coco_image["id"]
+    #             coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+    #             coco_annotation["area"] = area
+    #             coco_annotation["category_id"] = annotation["category_id"]
+    #             coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+    #
+    #             coco_annotations.append(coco_annotation)
+    #
+    #         for bbox_idx, bbox in enumerate(annotation["digit_bboxes"]):
+    #             # create a new dict with only COCO fields
+    #             # for each annotation
+    #             coco_annotation = {}
+    #             # bbox = np.array(annotation["digit_bboxes"])
+    #             # COCO requirement: XYWH box format
+    #             bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
+    #
+    #             # Computing areas using bounding boxes
+    #             bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    #             area = Boxes([bbox_xy]).area()[0].item()
+    #             # COCO requirement:
+    #             #   linking annotations to images
+    #             #   "id" field must start with 1
+    #             coco_annotation["id"] = len(coco_annotations) + 1
+    #             coco_annotation["image_id"] = coco_image["id"]
+    #             coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+    #             coco_annotation["area"] = area
+    #             coco_annotation["category_id"] = annotation["digit_ids"][bbox_idx]
+    #             coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+    #             coco_annotations.append(coco_annotation)
+    #
+    #         # add jersey number coco format
+    #         coco_annotation = {}
+    #         bbox = BoxMode.convert(annotation["number_bbox"], bbox_mode, BoxMode.XYWH_ABS)
+    #         # Computing areas using bounding boxes
+    #         bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    #         area = Boxes([bbox_xy]).area()[0].item()
+    #         coco_annotation["id"] = len(coco_annotations) + 1
+    #         coco_annotation["image_id"] = coco_image["id"]
+    #         coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+    #         coco_annotation["area"] = area
+    #         coco_annotation["category_id"] = annotation["number_id"]
+    #         coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+    #         coco_annotations.append(coco_annotation)
+    #
+    # logger.info(
+    #     "Conversion finished, "
+    #     f"num images: {len(coco_images)}, num annotations: {len(coco_annotations)}"
+    # )
+    #
+    # info = {
+    #     "date_created": str(datetime.datetime.now()),
+    #     "description": "Automatically generated COCO json file for Detectron2.",
+    # }
+    # coco_dict = {
+    #     "info": info,
+    #     "images": coco_images,
+    #     "annotations": coco_annotations,
+    #     "categories": categories,
+    #     "licenses": None,
+    # }
+    # return coco_dict
+
+def convert_person_eval(dataset_dicts, categories):
     coco_images = []
     coco_annotations = []
-
     for image_id, image_dict in enumerate(dataset_dicts):
         coco_image = {
             "id": image_dict.get("image_id", image_id),
@@ -510,44 +556,74 @@ def convert_to_coco_dict(dataset_name):
         anns_per_image = image_dict["annotations"]
         for annotation in anns_per_image:
             bbox_mode = annotation["bbox_mode"]
-            if not digit_only:
-                # add person annotation
-                coco_annotation = {}
-                bbox = annotation["person_bbox"]
-                bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
-                if "keypoints" in annotation:
-                    keypoints = annotation["keypoints"]  # list[int]
-                    for idx, v in enumerate(keypoints):
-                        if idx % 3 != 2:
-                            # COCO's segmentation coordinates are floating points in [0, H or W],
-                            # but keypoint coordinates are integers in [0, H-1 or W-1]
-                            # For COCO format consistency we substract 0.5
-                            # https://github.com/facebookresearch/detectron2/pull/175#issuecomment-551202163
-                            keypoints[idx] = v - 0.5
-                    if "num_keypoints" in annotation:
-                        num_keypoints = annotation["num_keypoints"]
-                    else:
-                        num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
+            # add person annotation
+            coco_annotation = {}
+            bbox = annotation["person_bbox"]
+            bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
+            if "keypoints" in annotation:
+                keypoints = annotation["keypoints"]  # list[int]
+                for idx, v in enumerate(keypoints):
+                    if idx % 3 != 2:
+                        # COCO's segmentation coordinates are floating points in [0, H or W],
+                        # but keypoint coordinates are integers in [0, H-1 or W-1]
+                        # For COCO format consistency we substract 0.5
+                        # https://github.com/facebookresearch/detectron2/pull/175#issuecomment-551202163
+                        keypoints[idx] = v - 0.5
+                if "num_keypoints" in annotation:
+                    num_keypoints = annotation["num_keypoints"]
+                else:
+                    num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
 
-                # Computing areas using bounding boxes
-                bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-                area = Boxes([bbox_xy]).area()[0].item()
-                # Add optional fields
-                if "keypoints" in annotation:
-                    coco_annotation["keypoints"] = keypoints
-                    coco_annotation["num_keypoints"] = num_keypoints
+            # Computing areas using bounding boxes
+            bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+            area = Boxes([bbox_xy]).area()[0].item()
+            # Add optional fields
+            if "keypoints" in annotation:
+                coco_annotation["keypoints"] = keypoints
+                coco_annotation["num_keypoints"] = num_keypoints
 
-                coco_annotation["id"] = len(coco_annotations) + 1
-                coco_annotation["image_id"] = coco_image["id"]
-                coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
-                coco_annotation["area"] = area
-                coco_annotation["category_id"] = annotation["category_id"]
-                coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-                # add jersey number List[int]
-                coco_annotation["jersey_number"] = annotation["digit_ids"]
+            coco_annotation["id"] = len(coco_annotations) + 1
+            coco_annotation["image_id"] = coco_image["id"]
+            coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+            coco_annotation["area"] = area
+            coco_annotation["category_id"] = annotation["category_id"]
+            coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
 
-                coco_annotations.append(coco_annotation)
+            coco_annotations.append(coco_annotation)
 
+    logger.info(
+        "Conversion finished, "
+        f"num images: {len(coco_images)}, num annotations: {len(coco_annotations)}"
+    )
+
+    info = {
+        "date_created": str(datetime.datetime.now()),
+        "description": "Automatically generated COCO json file for Detectron2.",
+    }
+    coco_dict = {
+        "info": info,
+        "images": coco_images,
+        "annotations": coco_annotations,
+        "categories": categories,
+        "licenses": None,
+    }
+    return coco_dict
+
+def convert_digit_bbox_eval(dataset_dicts, categories):
+    coco_images = []
+    coco_annotations = []
+    for image_id, image_dict in enumerate(dataset_dicts):
+        coco_image = {
+            "id": image_dict.get("image_id", image_id),
+            "width": image_dict["width"],
+            "height": image_dict["height"],
+            "file_name": image_dict["file_name"],
+        }
+        coco_images.append(coco_image)
+
+        anns_per_image = image_dict["annotations"]
+        for annotation in anns_per_image:
+            bbox_mode = annotation["bbox_mode"]
             for bbox_idx, bbox in enumerate(annotation["digit_bboxes"]):
                 # create a new dict with only COCO fields
                 # for each annotation
@@ -568,9 +644,6 @@ def convert_to_coco_dict(dataset_name):
                 coco_annotation["area"] = area
                 coco_annotation["category_id"] = annotation["digit_ids"][bbox_idx]
                 coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-
-
-
                 coco_annotations.append(coco_annotation)
 
     logger.info(
@@ -591,9 +664,60 @@ def convert_to_coco_dict(dataset_name):
     }
     return coco_dict
 
-def instances_to_coco_json(instances, img_id, digit_only=True):
+def convert_jersey_number_eval(dataset_dicts, categories):
+    coco_images = []
+    coco_annotations = []
+    for image_id, image_dict in enumerate(dataset_dicts):
+        coco_image = {
+            "id": image_dict.get("image_id", image_id),
+            "width": image_dict["width"],
+            "height": image_dict["height"],
+            "file_name": image_dict["file_name"],
+        }
+        coco_images.append(coco_image)
+
+        anns_per_image = image_dict["annotations"]
+        for annotation in anns_per_image:
+            bbox_mode = annotation["bbox_mode"]
+            # add jersey number coco format
+            coco_annotation = {}
+            bbox = annotation["number_bbox"]
+            if len(bbox):
+                bbox = BoxMode.convert(annotation["number_bbox"], bbox_mode, BoxMode.XYWH_ABS)
+                # Computing areas using bounding boxes
+                bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+                area = Boxes([bbox_xy]).area()[0].item()
+                coco_annotation["id"] = len(coco_annotations) + 1
+                coco_annotation["image_id"] = coco_image["id"]
+                coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+                coco_annotation["area"] = area
+                coco_annotation["category_id"] = annotation["number_id"]
+                coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+                coco_annotations.append(coco_annotation)
+
+    logger.info(
+        "Conversion finished, "
+        f"num images: {len(coco_images)}, num annotations: {len(coco_annotations)}"
+    )
+
+    info = {
+        "date_created": str(datetime.datetime.now()),
+        "description": "Automatically generated COCO json file for Detectron2.",
+    }
+    coco_dict = {
+        "info": info,
+        "images": coco_images,
+        "annotations": coco_annotations,
+        "categories": categories,
+        "licenses": None,
+    }
+    return coco_dict
+
+
+def instances_to_coco_json(instances, img_id, digit_only=True, thing_classes=None, keypoints_inds=None):
     """
     Dump an "Instances" object to a COCO-format json that's used for evaluation.
+    tasks list: person_bbox, keypoints, jersey_number, digit_bbox
 
     Args:
         instances (Instances):
@@ -605,23 +729,49 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
     num_instance = len(instances)
     if num_instance == 0:
         return []
-
+    # person detections or digit_only digits
     boxes = instances.pred_boxes.tensor.numpy()
     boxes = BoxMode.convert(boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
     boxes = boxes.tolist()
     scores = instances.scores.tolist()
     classes = instances.pred_classes.tolist()
+    results = []
     if digit_only:
-        results = []
         for k in range(num_instance):
             result = {
                 "image_id": img_id,
                 "category_id": classes[k],
                 "bbox": boxes[k],
                 "score": scores[k],
+                "tasks": ["digit_bbox"]
             }
             results.append(result)
         return results
+
+    # person instances
+    has_keypoints = instances.has("pred_keypoints")
+    for k in range(num_instance):
+        result = {
+            "image_id": img_id,
+            "category_id": classes[k],
+            "bbox": boxes[k],
+            "score": scores[k],
+            "tasks": ["person_bbox"]  # assign which task needs this result
+        }
+        if has_keypoints:
+            result["tasks"].append("keypoints")
+            # In COCO annotations,
+            # keypoints coordinates are pixel indices.
+            # However our predictions are floating point coordinates.
+            # Therefore we subtract 0.5 to be consistent with the annotation format.
+            # This is the inverse of data loading logic in `datasets/coco.py`.
+            keypoints = instances.pred_keypoints[k]
+            keypoints[:, :2] -= 0.5
+            result["full_keypoints"] = keypoints.flatten().tolist()
+            # only gather the 4 keypoints for evaluation
+            keypoints = keypoints[keypoints_inds, :]
+            result["keypoints"] = keypoints.flatten().tolist()
+        results.append(result)
 
     # convert digit related fields
     digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
@@ -639,44 +789,38 @@ def instances_to_coco_json(instances, img_id, digit_only=True):
         digit_scores, digit_classes = [], []
 
     num_digit_instance = len(digit_boxes)
-    boxes = boxes + digit_boxes
-    scores = scores + digit_scores
-    classes = classes + digit_classes
-    assert len(boxes) == len(scores) == len(classes)
-    num_person_instance = num_instance
-    num_instance = num_instance + num_digit_instance
 
-    has_keypoints = instances.has("pred_keypoints")
-    if has_keypoints:
-        keypoints = instances.pred_keypoints
-    # add jersey number recognitions
-    jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_jersey_numbers] \
-        if instances.has("pred_jersey_numbers") else [[] for _ in range(num_instance)]
-    jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_jersey_numbers_scores] \
-        if instances.has("pred_jersey_numbers_scores") else [[] for _ in range(num_instance)]
-    results = []
-    for k in range(num_instance):
+    for k in range(num_digit_instance):
         result = {
             "image_id": img_id,
-            "category_id": classes[k],
-            "bbox": boxes[k],
-            "score": scores[k],
+            "category_id": digit_classes[k],
+            "bbox": digit_boxes[k],
+            "score": digit_scores[k],
+            "tasks": ["digit_bbox"]
         }
-        if k < num_person_instance:
-            result["jersey_number"] = jersey_numbers[k]
-            result["jersey_number_score"] = jersey_scores[k]
-            if has_keypoints:
-                # In COCO annotations,
-                # keypoints coordinates are pixel indices.
-                # However our predictions are floating point coordinates.
-                # Therefore we subtract 0.5 to be consistent with the annotation format.
-                # This is the inverse of data loading logic in `datasets/coco.py`.
-                keypoints[k][:, :2] -= 0.5
-                result["keypoints"] = keypoints[k].flatten().tolist()
-        if k >= num_person_instance:
             # add a field for matching the digit to its person
-            result["match_id"] = digit_box_instance_inds[k-num_person_instance]
+            # result["match_id"] = digit_box_instance_inds[k-num_person_instance]
         results.append(result)
+
+    # add jersey number recognitions
+    jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_number_classes] \
+        if instances.has("pred_number_classes") else [[] for _ in range(num_instance)]
+    jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_number_scores] \
+        if instances.has("pred_number_scores") else [[] for _ in range(num_instance)]
+    jersey_boxes = [BoxMode.convert(number_boxes.tensor.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist() for
+                    number_boxes in instances.pred_number_boxes]
+    for j_ns, j_ss, j_bs in zip(jersey_numbers, jersey_scores, jersey_boxes):
+        for j_n, j_s, j_b in zip(j_ns, j_ss, j_bs):
+            number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
+            number_id = thing_classes.index(number_id) if number_id in thing_classes else -1
+            result = {
+                "image_id": img_id,
+                "category_id": number_id,
+                "bbox": j_b,
+                "score": j_s,
+                "tasks" : ["jersey_number"]
+            }
+            results.append(result)
     return results
 
 

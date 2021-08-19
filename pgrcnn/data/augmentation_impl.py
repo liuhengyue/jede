@@ -43,10 +43,9 @@ class RandColor(Augmentation):
     def get_transform(self, img):
         w = np.random.rand(3)
         mix_w = np.random.uniform(0.1, 1)
-        if mix_w < 0.5:
-            img = np.invert(img)
+        shift = (np.random.rand(3) - 0.5) * 20
         # img.mean()[np.newaxis] * w
-        return BlendTransform(src_image=img * w, src_weight=1 - mix_w, dst_weight=mix_w)
+        return BlendTransform(src_image=img * w + shift, src_weight=1 - mix_w, dst_weight=mix_w)
 
 
 def paste_image(target_image, img, alpha=0.5):
