@@ -127,8 +127,8 @@ class PGRCNN(nn.Module):
         if self.proposal_generator:
             proposals, proposal_losses = self.proposal_generator(images, features, gt_instances)
         else:
-            assert "proposals" in batched_inputs[0]
-            proposals = [x["proposals"].to(self.device) for x in batched_inputs]
+            assert "instances" in batched_inputs[0]
+            proposals = [x["instances"].to(self.device) for x in batched_inputs]
             proposal_losses = {}
 
         _, detector_losses = self.roi_heads(images, features, proposals, gt_instances)

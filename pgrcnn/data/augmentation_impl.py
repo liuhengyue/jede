@@ -42,7 +42,7 @@ class RandColor(Augmentation):
 
     def get_transform(self, img):
         w = np.random.rand(3)
-        mix_w = np.random.uniform(0.1, 1)
+        mix_w = 0.5
         shift = (np.random.rand(3) - 0.5) * 20
         # img.mean()[np.newaxis] * w
         return BlendTransform(src_image=img * w + shift, src_weight=1 - mix_w, dst_weight=mix_w)
@@ -174,6 +174,15 @@ def copy_paste_mix_images(dataset_dicts,
                 digit_bboxes = digit_bboxes.tolist()
                 instance_anno.update({"digit_bboxes": digit_bboxes,
                                       "digit_ids": anno["digit_ids"]})
+            if "number_bbox" in anno:
+                number_bbox = tfm.apply_box(np.array(anno["number_bbox"], dtype=np.float32))[0]
+                number_bbox[0::2] += x
+                number_bbox[1::2] += y
+                number_bbox = number_bbox.tolist()
+                instance_anno.update({"number_bbox": number_bbox,
+                                      "number_sequence": anno["number_sequence"],
+                                      "number_id": anno["number_id"]
+                                      })
             target_dataset_dict["annotations"].append(instance_anno)
     target_dataset_dict["image"] = target_image
     return target_dataset_dict

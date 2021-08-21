@@ -98,13 +98,16 @@ def transform_instance_annotations(
         bbox = BoxMode.convert(annotation["person_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
         # Note that bbox is 1d (per-instance bounding box)
         annotation["person_bbox"] = transforms.apply_box(np.array([bbox], dtype=np.float32))[0].clip(min=0)
-        annotation["bbox_mode"] = BoxMode.XYXY_ABS
     if "digit_bboxes" in annotation:
         bbox = BoxMode.convert(annotation["digit_bboxes"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
         # (n, 4) if given an empty list, it will return (0, 4)
         bbox = transforms.apply_box(np.array(bbox, dtype=np.float32)).clip(min=0)
         annotation["digit_bboxes"] = bbox
-
+    if "number_bbox" in annotation:
+        bbox = BoxMode.convert(annotation["number_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
+        # Note that bbox is 1d (per-instance bounding box)
+        annotation["number_bbox"] = transforms.apply_box(np.array([bbox], dtype=np.float32)).clip(min=0)
+    annotation["bbox_mode"] = BoxMode.XYXY_ABS
     if "keypoints" in annotation:
         # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format
         # _C.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS = 17 use COCO dataset
@@ -211,12 +214,16 @@ def annotations_to_instances(annos,
         # add centers and scales
         target.gt_digit_centers = [box.get_centers() for box in boxes]
         target.gt_digit_scales = [box.get_scales() for box in boxes]
+    if "number_bbox" in annos[0]:
         # we then add instance-level jersey number box and cls
-        gt_number_boxes = target.gt_number_boxes = [box.union() for box in boxes] # there could be empty box
-        target.gt_number_centers = [box.get_centers() for box in gt_number_boxes]
-        target.gt_number_scales = [box.get_scales() for box in gt_number_boxes]
+        boxes = [BoxMode.convert(obj["number_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
+        boxes = target.gt_number_boxes = [Boxes(box) for box in boxes] # there could be empty box
+        target.gt_number_centers = [box.get_centers() for box in boxes]
+        target.gt_number_scales = [box.get_scales() for box in boxes]
         # target.gt_number_classes = classes
         # create sequence with zero paddings
+        classes = [obj["number_sequence"] for obj in annos]
+        classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
         gt_lengths = torch.as_tensor([x.numel() for x in classes], dtype=torch.long)
         N = gt_lengths.numel()
         gt_seq = torch.zeros((N, seq_max_length), dtype=torch.long)
@@ -224,6 +231,7 @@ def annotations_to_instances(annos,
             gt_seq[i, :gt_lengths[i]] = classes[i]
         target.gt_number_lengths = gt_lengths
         target.gt_number_sequences = gt_seq
+        target.gt_number_ids = torch.as_tensor([obj["number_id"] for obj in annos], dtype=torch.long)
 
     # not every instance has the keypoints annotation, so we pad it
     if "keypoints" in annos[0]:

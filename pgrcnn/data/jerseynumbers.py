@@ -139,7 +139,10 @@ def get_dicts(data_dir, anno_dir, split=None, digit_only=False, num_images=-1):
                 [CLASS_NAMES.index(str(digit)) for digit in annotations[i]['annotations'][j]['digit_labels']]
             # add jersey number box and ids
             digit_bboxes = annotations[i]['annotations'][j]['digit_bboxes']
+            # list of one list
             annotations[i]['annotations'][j]['number_bbox'] = get_union_box(digit_bboxes)
+            annotations[i]['annotations'][j]['number_sequence'] = annotations[i]['annotations'][j]['digit_ids']
+            # for eval only
             number_id = ''.join([str(digit) for digit in annotations[i]['annotations'][j]['digit_labels']])
             number_id = CLASS_NAMES.index(number_id) if number_id else -1
             annotations[i]['annotations'][j]['number_id'] = number_id

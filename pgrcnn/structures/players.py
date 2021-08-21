@@ -46,12 +46,13 @@ class Players(Instances):
         The length of `value` must be the number of instances,
         and must agree with other existing fields in this object.
         """
-        data_len = len(value)
-        if len(self._fields):
-            # we allow the instance to have different length
-            assert (
-                len(self) == data_len
-            ), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
+        # disable for now since we have different datasets
+        # data_len = len(value)
+        # if len(self._fields):
+        #     # we allow the instance to have different length
+        #     assert (
+        #         len(self) == data_len
+        #     ), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
         self._fields[name] = value
 
     # Tensor-like methods
@@ -131,8 +132,6 @@ class Players(Instances):
                 values = list(itertools.chain(*values))
             elif hasattr(type(v0), "cat"):
                 values = type(v0).cat(values)
-            # elif type(v0).__name__ == "Keypoints":
-            #     values = type(v0)(torch.cat([v.tensor for v in values], dim=0))
             else:
                 raise ValueError("Unsupported type {} for concatenation".format(type(v0)))
             ret.set(k, values)

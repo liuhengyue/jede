@@ -48,7 +48,7 @@ def add_poseguide_config(cfg):
     _C = cfg
 
     # some customizations of RPN
-    _C.MODEL.PROPOSAL_GENERATOR.NAME = "PlayerRPN"
+    _C.MODEL.PROPOSAL_GENERATOR.NAME = "PlayerRPN" # "PrecomputedProposals" for train coco/svhn
     # disable shuffle for debugging
     _C.DATALOADER.SHUFFLE = True
     # dataset configurations

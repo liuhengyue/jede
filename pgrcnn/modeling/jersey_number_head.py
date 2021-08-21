@@ -91,16 +91,16 @@ class SequenceModel(nn.Module):
         # gt_lengths = torch.as_tensor([x.numel() for x in gt_numbers], dtype=torch.long, device=predictions.device)
         # if we have no instance
         gt_number_classes = torch.cat([torch.cat(p.gt_number_classes)
-                                               if len(p.gt_number_classes)
+                                               if p.has("gt_number_classes") and len(p.gt_number_classes)
                                                else torch.empty((0,), dtype=torch.long, device=predictions.device)
                                                 for p in proposals]) # 0 is bg
         gt_lengths = torch.cat([torch.cat(p.gt_number_lengths)
-                                if len(p.gt_number_lengths)
+                                if p.has("gt_number_lengths") and len(p.gt_number_lengths)
                                 else torch.empty((0,), dtype=torch.long, device=predictions.device)
                                 for p in proposals])
 
         gt_seq = torch.cat([torch.cat(p.gt_number_sequences)
-                            if len(p.gt_number_sequences)
+                            if p.has("gt_number_sequences") and len(p.gt_number_sequences)
                             else torch.empty((0, self.max_length), dtype=torch.long, device=predictions.device)
                             for p in proposals])
         valid = gt_number_classes > 0

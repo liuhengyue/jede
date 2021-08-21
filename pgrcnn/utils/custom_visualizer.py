@@ -223,7 +223,8 @@ class JerseyNumberVisualizer(Visualizer):
             "digit_bboxes": Boxes.cat(instance.gt_digit_boxes).tensor.numpy() if instance.has('gt_digit_boxes') else np.empty((0, 4)),
             "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if instance.has('gt_digit_classes') else np.empty((0,)),
             "category_id": instance.gt_classes.numpy() if instance.has('gt_classes') else np.empty((0,)),
-            "jersey_numbers": [number_ids.numpy() for number_ids in instance.jersey_numbers] if instance.has('jersey_numbers') else [],
+            "number_bbox": Boxes.cat(instance.gt_number_boxes).tensor.numpy() if instance.has('gt_number_boxes') else np.empty((0, 4)),
+            "number_id": instance.gt_number_ids.numpy() if instance.has('gt_number_ids') else np.empty((0,)),
             })
         return {"annotations": instances_list}
 
@@ -338,10 +339,10 @@ class JerseyNumberVisualizer(Visualizer):
             if len(labels):
                 person_colors = [_RED for _ in range(len(labels))]
                 self.overlay_instances(labels=labels, boxes=person_bbox, masks=None, keypoints=keypoints, assigned_colors=person_colors)
-                if len(number_labels):
-                    number_colors = [_MID_GRAY for _ in range(len(number_labels))]
-                    self.overlay_instances(labels=number_labels, boxes=number_bbox, masks=None, keypoints=None,
-                                           assigned_colors=number_colors, pos="up_mid")
+            if len(number_labels):
+                number_colors = [_MID_GRAY for _ in range(len(number_labels))]
+                self.overlay_instances(labels=number_labels, boxes=number_bbox, masks=None, keypoints=None,
+                                       assigned_colors=number_colors, pos="up_mid")
             if len(digit_labels):
                 self.overlay_instances(labels=digit_labels, boxes=digit_bboxes, masks=None, keypoints=None)
             return self.output

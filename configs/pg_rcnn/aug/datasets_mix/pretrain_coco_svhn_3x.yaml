@@ -2,19 +2,28 @@ _BASE_: "../../pg_rcnn_base.yaml"
 MODEL:
   BACKBONE:
     FREEZE_AT: 0
+  RPN:
+    PRE_NMS_TOPK_TRAIN: 128  # Per FPN level
+    POST_NMS_TOPK_TRAIN: 64
+  ROI_HEADS:
+    PROPOSAL_APPEND_GT: False
+    ENABLE_POSE_GUIDE: False
+  ROI_JERSEY_NUMBER_DET:
+    NAME: "SequenceModel"
+  ROI_JERSEY_NUMBER_NECK:
+    NAME: None
 DATASETS:
   TRAIN: ("svhn_train", "keypoints_coco_2017_train")
-  TRAIN_VIDEO_IDS: [1,2,3]
-  TEST_VIDEO_IDS: [0]
 INPUT:
 #  MAX_SIZE_TEST: 320
   AUG:
-    COPY_PASTE_MIX: 22
+    COPY_PASTE_MIX: 10
+    RANDCOLOR: True
 DATALOADER:
   SAMPLER_TRAIN: WeightedTrainingSampler
 SOLVER:
   IMS_PER_BATCH: 8
-  BASE_LR: 0.0004 # when IMS_PER_BATCH = 16, LR is 0.02
+  BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (60000,)
   MAX_ITER: 75000
 OUTPUT_DIR: ./output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x

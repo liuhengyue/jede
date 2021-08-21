@@ -1,9 +1,18 @@
 _BASE_: "../pg_rcnn_base.yaml"
 MODEL:
+#  PROPOSAL_GENERATOR:
+#    NAME: "PrecomputedProposals"
+  RPN:
+    PRE_NMS_TOPK_TRAIN: 128  # Per FPN level
+    POST_NMS_TOPK_TRAIN: 64
+  ROI_HEADS:
+    PROPOSAL_APPEND_GT: False
+    ENABLE_POSE_GUIDE: False
   ROI_JERSEY_NUMBER_DET:
     NAME: "SequenceModel"
   ROI_JERSEY_NUMBER_NECK:
-    NAME: "JerseyNumberNeck"
+#    NAME: "JerseyNumberNeck"
+    NAME: None
   ROI_DIGIT_NECK:
     USE_PERSON_BOX_FEATURES: True
     USE_KEYPOINTS_FEATURES: True
@@ -23,7 +32,8 @@ MODEL:
       DECONV_KERNEL: 4
       UP_SCALE: 1
 DATASETS:
-  NUM_IMAGES: 1 # change the number of images to load
+  TRAIN: ("svhn_train", "keypoints_coco_2017_val_100") # ("svhn_train", jerseynumbers_train)
+  NUM_IMAGES: 10 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
   TEST_VIDEO_IDS: [1]
 INPUT:
@@ -31,11 +41,11 @@ INPUT:
   MAX_SIZE_TRAIN: 320
   MAX_SIZE_TEST: 320
   AUG:
-    COPY_PASTE_MIX: 0
-    RANDCOLOR: False
+    COPY_PASTE_MIX: 10
+    RANDCOLOR: True
 #    COLOR: True
 SOLVER:
-  IMS_PER_BATCH: 2
+  IMS_PER_BATCH: 4
   BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (1500, )
   MAX_ITER: 2000
@@ -45,4 +55,6 @@ SOLVER:
 DATALOADER:
   SHUFFLE: False
   NUM_WORKERS: 2
+  SAMPLER_TRAIN: "WeightedTrainingSampler"
+
 OUTPUT_DIR: ./output/pg_rcnn/tests/baseline

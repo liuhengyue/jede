@@ -175,35 +175,40 @@ class BaseROIHeads(StandardROIHeads):
         num_bg_samples = []
         for proposals_per_image, targets_per_image in zip(proposals, targets):
             has_gt = len(targets_per_image) > 0 and targets_per_image.has("gt_boxes")
+            has_proposal = len(targets_per_image) > 0 and proposals_per_image.has("proposal_boxes")
+            # we have person instances which go through the rpn
             if has_gt:
-                match_quality_matrix = pairwise_iou(
-                    targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
-                )
-                matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-                sampled_idxs, gt_classes = self._sample_proposals(
-                    matched_idxs, matched_labels, targets_per_image.gt_classes
-                )
+                if has_proposal:
+                    match_quality_matrix = pairwise_iou(
+                        targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
+                    )
+                    matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+                    sampled_idxs, gt_classes = self._sample_proposals(
+                        matched_idxs, matched_labels, targets_per_image.gt_classes
+                    )
 
-                # Set target attributes of the sampled proposals:
-                proposals_per_image = proposals_per_image[sampled_idxs]
-                proposals_per_image.gt_classes = gt_classes
+                    # Set target attributes of the sampled proposals:
+                    proposals_per_image = proposals_per_image[sampled_idxs]
+                    proposals_per_image.gt_classes = gt_classes
 
 
-                sampled_targets = matched_idxs[sampled_idxs]
-                # We index all the attributes of targets that start with "gt_"
-                # and have not been added to proposals yet (="gt_classes").
-                # NOTE: here the indexing waste some compute, because heads
-                # like masks, keypoints, etc, will filter the proposals again,
-                # (by foreground/background, or number of keypoints in the image, etc)
-                # so we essentially index the data twice.
-                for (trg_name, trg_value) in targets_per_image.get_fields().items():
-                    if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
-                        if isinstance(trg_value, list):
-                            proposals_per_image.set(trg_name, [trg_value[i] for i in sampled_targets.tolist()])
-                        else:
-                            proposals_per_image.set(trg_name, trg_value[sampled_targets])
-                num_bg_samples.append((gt_classes == self.num_classes).sum().item())
-                num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])
+                    sampled_targets = matched_idxs[sampled_idxs]
+                    # We index all the attributes of targets that start with "gt_"
+                    # and have not been added to proposals yet (="gt_classes").
+                    # NOTE: here the indexing waste some compute, because heads
+                    # like masks, keypoints, etc, will filter the proposals again,
+                    # (by foreground/background, or number of keypoints in the image, etc)
+                    # so we essentially index the data twice.
+                    for (trg_name, trg_value) in targets_per_image.get_fields().items():
+                        if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
+                            if isinstance(trg_value, list):
+                                proposals_per_image.set(trg_name, [trg_value[i] for i in sampled_targets.tolist()])
+                            else:
+                                proposals_per_image.set(trg_name, trg_value[sampled_targets])
+                    num_bg_samples.append((gt_classes == self.num_classes).sum().item())
+                    num_fg_samples.append(gt_classes.numel() - num_bg_samples[-1])
+                else:
+                    proposals_per_image.proposal_boxes = targets_per_image.gt_boxes
             # If no GT is given in the image, we don't know what a dummy gt value can be.
             # Therefore the returned proposals won't have any gt_* fields, except for a
             # gt_classes full of background label.
@@ -383,6 +388,12 @@ class BaseROIHeads(StandardROIHeads):
                 continue
             if not targets_per_image.has("proposal_boxes"):
                 targets_per_image.proposal_number_boxes = targets_per_image.gt_number_boxes
+                gt_valid = targets_per_image.gt_number_lengths > 0
+                gt_number_classes = gt_valid[gt_valid].long()
+                num_number_boxes = [len(box) for box in targets_per_image.proposal_number_boxes]
+                targets_per_image.gt_number_classes = list(gt_number_classes.split(num_number_boxes))
+                targets_per_image.gt_number_lengths = list(targets_per_image.gt_number_lengths.split(num_number_boxes))
+                targets_per_image.gt_number_sequences = list(targets_per_image.gt_number_sequences.split(num_number_boxes))
                 continue
             N = len(targets_per_image)
             # create a instance index to match with person proposal_box
@@ -473,49 +484,6 @@ class BaseROIHeads(StandardROIHeads):
         storage.put_scalar("pg_head/num_fg_num_samples", np.mean(num_fg_samples) if len(num_fg_samples) else 0.)
         storage.put_scalar("pg_head/num_bg_num_samples", np.mean(num_bg_samples) if len(num_bg_samples) else 0.)
 
-    # @torch.no_grad()
-    # def label_and_sample_jerseynumber_proposals(self,
-    #                                             targets: List[Players],
-    #                                             add_gt=True):
-    #     """
-    #     targets: list (Players): a list of instances.
-    #     """
-    #     for targets_per_image in targets: # image level
-    #         proposal_digit_boxes = targets_per_image.proposal_digit_boxes
-    #         # get the top k boxes based on cfg
-    #         # proposal_number_boxes = [b[:self.top_k_digits].union() for b in proposal_digit_boxes]
-    #         # or based on threshold
-    #         proposal_scores = targets_per_image.proposal_digit_scores
-    #         proposal_number_boxes = [b[s > 0.5].union() for b, s in zip(proposal_digit_boxes, proposal_scores)]
-    #         gt_number_boxes = targets_per_image.gt_number_boxes
-    #         device = targets_per_image.proposal_boxes.device
-    #         # gt_number_classes = targets_per_image.gt_number_classes.copy()
-    #         gt_number_sequences = targets_per_image.gt_number_sequences.clone()
-    #         gt_number_lengths = targets_per_image.gt_number_lengths.clone()
-    #         # we get empty tensor for empty boxes
-    #         # valid if we have boxes for both proposal and gt
-    #         valid = [len(b) > 0 and b.nonempty()[0].tolist() and len(gt_b) > 0 for b, gt_b in zip(proposal_number_boxes, gt_number_boxes)]
-    #         sampled_inds = [i for i, v in enumerate(valid) if v]
-    #         sampled_proposal_number_boxes = Boxes.cat([p for v, p in zip(valid, proposal_number_boxes) if v]).to(device)
-    #         sampled_gt_number_boxes = Boxes.cat([p for v, p in zip(valid, gt_number_boxes) if v]).to(device)
-    #         # perform matching [N,] scores of matching
-    #         match_quality_matrix = matched_boxlist_iou(sampled_gt_number_boxes, sampled_proposal_number_boxes)
-    #         # only set empty boxes or boxes of iou < 0.7 be negative
-    #         neg_inds = [i for i in range(len(valid)) if ( (not valid[i]) or match_quality_matrix[sampled_inds.index(i)] < 0.7 )]
-    #         # set negative to empty
-    #         for neg_ind in neg_inds:
-    #             gt_number_lengths[neg_ind] = 0
-    #             # gt_number_classes[neg_ind] = torch.empty((0,), dtype=torch.long, device=match_quality_matrix.device)
-    #             proposal_number_boxes[neg_ind] = Boxes([]).to(match_quality_matrix.device)
-    #         if add_gt:
-    #             proposal_number_boxes = [ Boxes.cat((gt_b, p_b)) for gt_b, p_b in zip(targets_per_image.gt_number_boxes, proposal_number_boxes)]
-    #             # gt_number_classes = [[gt_c, p_c] for gt_c, p_c in zip(targets_per_image.gt_number_classes, gt_number_classes)]
-    #             gt_number_sequences = torch.stack((targets_per_image.gt_number_sequences, gt_number_sequences), dim=1)
-    #             gt_number_lengths = torch.stack((targets_per_image.gt_number_lengths, gt_number_lengths), dim=1)
-    #         targets_per_image.proposal_number_boxes = proposal_number_boxes
-    #         # targets_per_image.gt_number_classes = gt_number_classes
-    #         targets_per_image.gt_number_sequences = gt_number_sequences
-    #         targets_per_image.gt_number_lengths = gt_number_lengths
 
 
 

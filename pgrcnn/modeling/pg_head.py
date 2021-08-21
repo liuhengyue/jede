@@ -48,7 +48,7 @@ class PGROIHeads(BaseROIHeads):
         # add classification of number of jersey number
         if self.enable_jersey_number_det:
             self._init_number_head(cfg, input_shape)
-            if self.enable_jersey_number_neck:
+            if self.enable_pose_guide and self.enable_jersey_number_neck:
                 feat_shape = self.digit_neck.intermediate_shape()
                 self.jersey_number_neck = build_jersey_number_neck(cfg, feat_shape)
 
@@ -194,6 +194,9 @@ class PGROIHeads(BaseROIHeads):
             detections = [None for _ in instances]
             # assign new fields to instances
             self.label_and_sample_digit_proposals(detections, instances)
+            if not self.enable_jersey_number_neck:
+                detections = [None for _ in instances]
+                self.label_and_sample_jerseynumber_proposals(detections, instances)
             return {}
         if self.use_person_box_features:
             # we pool the features again for convenience
@@ -256,12 +259,14 @@ class PGROIHeads(BaseROIHeads):
                                        else torch.empty((0, 4), dtype=torch.float32, device=device)
                                        for b in instances], dim=0)
                     # detection boxes (N, num of candidates, (x1, y1, x2, y2, score, center cls))
+                    # we only train on positive samples so get the top k
                     detections = ctdet_decode(center_heatmaps, scale_heatmaps, bboxes_flat,
                                               reg=offset_heatmaps,
                                               K=self.num_proposal_train,
                                               fg_ratio=self.fg_ratio,
                                               size_target_type=self.size_target_type,
-                                              size_target_scale=self.size_target_scale)
+                                              size_target_scale=self.size_target_scale,
+                                              training=False)
                     # deal with svhn since the instances will not contain proposal_boxes
                     len_instances = [len(instance) if instance.has("proposal_boxes") else 0 for instance in instances]
                     detections = list(detections.split(len_instances))

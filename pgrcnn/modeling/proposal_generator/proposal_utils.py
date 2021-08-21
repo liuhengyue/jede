@@ -185,7 +185,7 @@ def add_ground_truth_to_proposals_single_image(
         gt = Players(proposals.image_size, gt_boxes=gt)
     if gt.has("gt_boxes"):
         gt_boxes = gt.gt_boxes
-        device = proposals.objectness_logits.device
+        device = gt_boxes.device
         # Assign all ground-truth boxes an objectness logit corresponding to
         # P(object) = sigmoid(logit) =~ 1.
         gt_logit_value = math.log((1.0 - 1e-10) / (1 - (1.0 - 1e-10)))
