@@ -7,12 +7,14 @@ MODEL:
     POST_NMS_TOPK_TRAIN: 64
   ROI_HEADS:
     PROPOSAL_APPEND_GT: False
-    ENABLE_POSE_GUIDE: False
+    ENABLE_POSE_GUIDE: True
   ROI_JERSEY_NUMBER_DET:
     NAME: "SequenceModel"
+    NUMBER_POOLER_RESOLUTION: (1, 14)
+    SEQUENCE_RESOLUTION: (1, 14)
   ROI_JERSEY_NUMBER_NECK:
-#    NAME: "JerseyNumberNeck"
-    NAME: None
+    NAME: "JerseyNumberNeck"
+#    NAME: None
   ROI_DIGIT_NECK:
     USE_PERSON_BOX_FEATURES: True
     USE_KEYPOINTS_FEATURES: True
@@ -32,7 +34,7 @@ MODEL:
       DECONV_KERNEL: 4
       UP_SCALE: 1
 DATASETS:
-  TRAIN: ("svhn_train", "keypoints_coco_2017_val_100") # ("svhn_train", jerseynumbers_train)
+  TRAIN: ("jerseynumbers_train", ) # ("svhn_train", "keypoints_coco_2017_val_100") # jerseynumbers_train
   NUM_IMAGES: 10 # change the number of images to load
   TRAIN_VIDEO_IDS: [1]
   TEST_VIDEO_IDS: [1]
@@ -41,11 +43,11 @@ INPUT:
   MAX_SIZE_TRAIN: 320
   MAX_SIZE_TEST: 320
   AUG:
-    COPY_PASTE_MIX: 10
-    RANDCOLOR: True
+    COPY_PASTE_MIX: 0
+    RANDCOLOR: False
 #    COLOR: True
 SOLVER:
-  IMS_PER_BATCH: 4
+  IMS_PER_BATCH: 2
   BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (1500, )
   MAX_ITER: 2000

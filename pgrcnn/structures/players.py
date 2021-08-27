@@ -46,13 +46,12 @@ class Players(Instances):
         The length of `value` must be the number of instances,
         and must agree with other existing fields in this object.
         """
-        # disable for now since we have different datasets
-        # data_len = len(value)
-        # if len(self._fields):
-        #     # we allow the instance to have different length
-        #     assert (
-        #         len(self) == data_len
-        #     ), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
+        data_len = len(value)
+        if len(self._fields):
+            # we allow the instance to have different length
+            assert (
+                len(self) == data_len
+            ), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
         self._fields[name] = value
 
     # Tensor-like methods

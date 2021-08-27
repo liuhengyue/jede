@@ -175,9 +175,10 @@ def copy_paste_mix_images(dataset_dicts,
                 instance_anno.update({"digit_bboxes": digit_bboxes,
                                       "digit_ids": anno["digit_ids"]})
             if "number_bbox" in anno:
-                number_bbox = tfm.apply_box(np.array(anno["number_bbox"], dtype=np.float32))[0]
-                number_bbox[0::2] += x
-                number_bbox[1::2] += y
+                # 1x4
+                number_bbox = tfm.apply_box(np.array(anno["number_bbox"], dtype=np.float32))
+                number_bbox[..., 0::2] += x
+                number_bbox[..., 1::2] += y
                 number_bbox = number_bbox.tolist()
                 instance_anno.update({"number_bbox": number_bbox,
                                       "number_sequence": anno["number_sequence"],

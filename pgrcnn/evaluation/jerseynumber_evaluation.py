@@ -206,10 +206,12 @@ class JerseyNumberEvaluator(COCOEvaluator):
 
         metrics = {
             "digit_bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"],
+            "digit_bbox_class_agnostic": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"],
             "person_bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
             "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
             "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
-            "jersey_number": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"]
+            "jersey_number": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"],
+            "jersey_number_box": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"]
         }[iou_type]
 
         if coco_eval is None:
@@ -293,11 +295,10 @@ class JerseyNumberEvaluator(COCOEvaluator):
         tasks = ("digit_bbox",) # this is for sure
         if cfg.DATASETS.DIGIT_ONLY:
             return tasks
-        if cfg.MODEL.MASK_ON:
-            tasks = tasks + ("segm",)
         if cfg.MODEL.KEYPOINT_ON:
             # tasks = tasks + ("person_bbox", "keypoints")
             tasks = tasks + ("jersey_number", "person_bbox", "keypoints")
+        tasks += ("digit_bbox_class_agnostic", "jersey_number_box",)
         return tasks
 
     def process(self, inputs, outputs):
@@ -417,6 +418,14 @@ def convert_to_coco_dict(dataset_name, task_name):
         ]
         return convert_digit_bbox_eval(dataset_dicts, categories)
 
+    elif task_name == 'digit_bbox_class_agnostic':
+        class_names = ["digit_bbox"]
+        categories = [
+            {"id": id, "name": name}
+            for id, name in enumerate(class_names)
+        ]
+        return convert_digit_bbox_eval(dataset_dicts, categories, class_agnostic=True)
+
     elif task_name == 'jersey_number':
         class_names = [str(i) for i in range(100)]
         categories = [
@@ -426,6 +435,13 @@ def convert_to_coco_dict(dataset_name, task_name):
         ]
         return convert_jersey_number_eval(dataset_dicts, categories)
 
+    elif task_name == 'jersey_number_box':
+        class_names = ["jersey_number_box"]
+        categories = [
+            {"id": id, "name": name}
+            for id, name in enumerate(class_names)
+        ]
+        return convert_jersey_number_eval(dataset_dicts, categories, class_agnostic=True)
     else:
         class_names = ["person"]
         categories = [
@@ -609,7 +625,7 @@ def convert_person_eval(dataset_dicts, categories):
     }
     return coco_dict
 
-def convert_digit_bbox_eval(dataset_dicts, categories):
+def convert_digit_bbox_eval(dataset_dicts, categories, class_agnostic=False):
     coco_images = []
     coco_annotations = []
     for image_id, image_dict in enumerate(dataset_dicts):
@@ -642,7 +658,9 @@ def convert_digit_bbox_eval(dataset_dicts, categories):
                 coco_annotation["image_id"] = coco_image["id"]
                 coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
                 coco_annotation["area"] = area
-                coco_annotation["category_id"] = annotation["digit_ids"][bbox_idx]
+                category_id = categories[0]['id'] if class_agnostic else annotation["digit_ids"][bbox_idx]
+                coco_annotation["category_id"] = category_id
+
                 coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
                 coco_annotations.append(coco_annotation)
 
@@ -664,7 +682,7 @@ def convert_digit_bbox_eval(dataset_dicts, categories):
     }
     return coco_dict
 
-def convert_jersey_number_eval(dataset_dicts, categories):
+def convert_jersey_number_eval(dataset_dicts, categories, class_agnostic=False):
     coco_images = []
     coco_annotations = []
     for image_id, image_dict in enumerate(dataset_dicts):
@@ -691,7 +709,8 @@ def convert_jersey_number_eval(dataset_dicts, categories):
                 coco_annotation["image_id"] = coco_image["id"]
                 coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
                 coco_annotation["area"] = area
-                coco_annotation["category_id"] = annotation["number_id"]
+                cat_id = categories[0]['id'] if class_agnostic else annotation["number_id"]
+                coco_annotation["category_id"] = cat_id
                 coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
                 coco_annotations.append(coco_annotation)
 
@@ -798,6 +817,15 @@ def instances_to_coco_json(instances, img_id, digit_only=True, thing_classes=Non
             "score": digit_scores[k],
             "tasks": ["digit_bbox"]
         }
+        results.append(result)
+
+        result = {
+            "image_id": img_id,
+            "category_id": 0,
+            "bbox": digit_boxes[k],
+            "score": digit_scores[k],
+            "tasks": ["digit_bbox_class_agnostic"]
+        }
             # add a field for matching the digit to its person
             # result["match_id"] = digit_box_instance_inds[k-num_person_instance]
         results.append(result)
@@ -819,6 +847,14 @@ def instances_to_coco_json(instances, img_id, digit_only=True, thing_classes=Non
                 "bbox": j_b,
                 "score": j_s,
                 "tasks" : ["jersey_number"]
+            }
+            results.append(result)
+            result = {
+                "image_id": img_id,
+                "category_id": 0,
+                "bbox": j_b,
+                "score": j_s,
+                "tasks": ["jersey_number_box"]
             }
             results.append(result)
     return results

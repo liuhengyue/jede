@@ -292,7 +292,7 @@ class JerseyNumberVisualizer(Visualizer):
 
         return self.output
 
-    def draw_single_instance(self, instance):
+    def draw_single_instance(self, instance, draw_digit=False):
         """
         instance can be either from detection or gt
         Given a instance dict, draw the corresponding
@@ -313,10 +313,18 @@ class JerseyNumberVisualizer(Visualizer):
             scores = instance.get("scores", None)
             digit_scores = instance.get("digit_scores", None)
             # get jersey number predictions
-            number_bbox = np.array(instance.get("number_bbox", np.empty((0, 4))))
-            number_id = np.array([instance.get("number_id")]) if "number_id" in instance else np.empty((0,))
-            number_id = number_id.reshape(-1).tolist()
+            number_bbox = np.array(instance.get("number_bbox", np.empty((0, 4)))).reshape(-1, 4)
+            number_id = np.array(instance.get("number_id")).reshape(-1) if "number_id" in instance else np.empty((0,))
+            # remove -1
+            valid = number_id > -1
+            number_id = number_id[valid]
+            number_id = number_id.tolist()
+            if len(number_id):
+                number_bbox = number_bbox[valid]
+            # todo: -1 in the number id
             number_score = instance.get("number_score", None)
+            if number_score is not None:
+                number_score = number_score[valid]
             # labels = _create_person_labels(category_id, scores, jersey_numbers, jersey_scores, self.metadata.get("thing_classes", None))
             labels = _create_text_labels(category_id, scores, self.metadata.get("thing_classes", None))
             digit_labels = _create_text_labels(digit_ids, digit_scores, self.metadata.get("thing_classes", None))
@@ -334,16 +342,16 @@ class JerseyNumberVisualizer(Visualizer):
                 person_bbox = [BoxMode.convert(person_bbox, bbox_mode, BoxMode.XYXY_ABS)]
                 digit_bboxes = [BoxMode.convert(each_digit_bbox, bbox_mode, BoxMode.XYXY_ABS) for
                            each_digit_bbox in digit_bboxes]
-                number_bbox = [BoxMode.convert(number_bbox, bbox_mode, BoxMode.XYXY_ABS)]
+                number_bbox = BoxMode.convert(number_bbox, bbox_mode, BoxMode.XYXY_ABS)
 
             if len(labels):
                 person_colors = [_RED for _ in range(len(labels))]
                 self.overlay_instances(labels=labels, boxes=person_bbox, masks=None, keypoints=keypoints, assigned_colors=person_colors)
-            if len(number_labels):
+            if number_labels and len(number_labels):
                 number_colors = [_MID_GRAY for _ in range(len(number_labels))]
                 self.overlay_instances(labels=number_labels, boxes=number_bbox, masks=None, keypoints=None,
                                        assigned_colors=number_colors, pos="up_mid")
-            if len(digit_labels):
+            if draw_digit and len(digit_labels):
                 self.overlay_instances(labels=digit_labels, boxes=digit_bboxes, masks=None, keypoints=None)
             return self.output
 

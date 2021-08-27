@@ -105,8 +105,8 @@ def transform_instance_annotations(
         annotation["digit_bboxes"] = bbox
     if "number_bbox" in annotation:
         bbox = BoxMode.convert(annotation["number_bbox"], annotation["bbox_mode"], BoxMode.XYXY_ABS)
-        # Note that bbox is 1d (per-instance bounding box)
-        annotation["number_bbox"] = transforms.apply_box(np.array([bbox], dtype=np.float32)).clip(min=0)
+        # bbox should be a list of lists
+        annotation["number_bbox"] = transforms.apply_box(np.array(bbox, dtype=np.float32)).clip(min=0)
     annotation["bbox_mode"] = BoxMode.XYXY_ABS
     if "keypoints" in annotation:
         # we have annotated 4 keypoints, but we can still maintain the 17 keypoints format

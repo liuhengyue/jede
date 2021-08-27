@@ -1,0 +1,33 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
+  ROI_JERSEY_NUMBER_DET:
+    NAME: "SequenceModel"
+  ROI_JERSEY_NUMBER_NECK:
+    NAME: "JerseyNumberNeck"
+  ROI_DIGIT_NECK:
+    USE_PERSON_BOX_FEATURES: True
+    USE_KEYPOINTS_FEATURES: True
+    FUSION_TYPE: "cat" # cat sum multiply
+    NORM: "GN"
+    OUTPUT_HEAD_CHANNELS: (1, 2, 2)
+    SIZE_TARGET_TYPE: "wh"
+    NUM_PROPOSAL_TRAIN: 100
+  ROI_DIGIT_NECK_BRANCHES:
+    NORM: "GN"
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+      UP_SCALE: 1
+      DECONV_KERNEL: 4
+    KEYPOINTS_BRANCH:
+      NAME: "KptsROIBranch" # "KptsROIBranch"
+      DECONV_KERNEL: 4
+      UP_SCALE: 1
+INPUT:
+  AUG:
+    COPY_PASTE_MIX: 10
+    RANDCOLOR: False
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+OUTPUT_DIR: ./output/pg_rcnn/ablations/test_0_gn_seq_pretrain_copypastemix

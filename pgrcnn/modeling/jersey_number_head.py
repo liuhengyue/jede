@@ -51,7 +51,7 @@ class SequenceModel(nn.Module):
         """
         super().__init__()
         self.max_length = cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQ_MAX_LENGTH
-        input_resolution = (input_shapes.height, input_shapes.width)
+        input_resolution = (input_shapes.height, input_shapes.width) # the pooler size
         self.seq_resolution = cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQUENCE_RESOLUTION
         in_channels = input_shapes.channels
         hidden_size = 256
@@ -60,8 +60,10 @@ class SequenceModel(nn.Module):
             BidirectionalLSTM(in_channels, hidden_size, hidden_size),
             BidirectionalLSTM(hidden_size, hidden_size, hidden_size)
         )
-
-        self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d(self.seq_resolution)
+        if input_resolution == self.seq_resolution:
+            self.AdaptiveAvgPool = None
+        else:
+            self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d(self.seq_resolution)
         self.output = nn.Linear(hidden_size, self.num_class)
         # (h, w, c)
         self._output_size = (self.seq_resolution[1], self.num_class)
@@ -70,11 +72,11 @@ class SequenceModel(nn.Module):
 
     def forward(self, x):
         if not x.numel():
+            # should not happen
             return _NewEmptyTensorOp.apply(x, (0,) + self._output_size)
-            # x = _NewEmptyTensorOp.apply(x, (x.size(0), x.size(1)) + self.seq_resolution)
-        # else:
         # [n, c, h, w] -> [n, c, 1, w]
-        x = self.AdaptiveAvgPool(x)
+        if self.AdaptiveAvgPool is not None:
+            x = self.AdaptiveAvgPool(x)
         # [n, w, c, 1]
         x = x.permute(0, 3, 1, 2)
         # [n, w, c]
@@ -148,7 +150,7 @@ class SequenceModel(nn.Module):
         decoded_preds = []
         N, T = pred_classes.size()
         if not N:
-            return decoded_preds #torch.empty((0,), device=pred_classes.device)
+            return torch.empty((0,), device=pred_classes.device)
         for i in range(N):
             decoded_preds.append(_decode(pred_classes[i], self.max_length))
         decoded_preds = torch.stack(decoded_preds)

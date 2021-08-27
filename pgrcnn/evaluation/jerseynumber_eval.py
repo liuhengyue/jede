@@ -40,7 +40,9 @@ class JerseyNumberEval(COCOeval):
             computeIoU = self.computeIoU
         elif p.iouType == 'keypoints':
             computeIoU = self.computeOks
-        if self.task_type == "jersey_number":
+        if self.task_type in {"jersey_number", "jersey_number_box"}:
+            computeIoU = self.computeIoU
+        if self.task_type == "digit_bbox_class_agnostic":
             computeIoU = self.computeIoU
         self.ious = {(imgId, catId): computeIoU(imgId, catId) \
                         for imgId in p.imgIds
