@@ -14,7 +14,7 @@ from detectron2.config import configurable
 from detectron2.modeling.sampling import subsample_labels
 from detectron2.modeling.roi_heads import StandardROIHeads
 from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY
-
+from detectron2.modeling.matcher import Matcher
 from pgrcnn.structures import Players, Boxes
 from pgrcnn.modeling.proposal_generator.proposal_utils import add_ground_truth_to_proposals
 
@@ -97,8 +97,12 @@ def select_proposals_with_visible_keypoints(proposals: List[Players]) -> List[Pl
         )
         selection = (kp_in_box & vis_mask).any(dim=1)
         selection_idxs = nonzero_tuple(selection)[0]
+        # we will have instance with no gt points
+        if selection_idxs.numel() == 0 and len(proposals_per_image) > 0:
+            ret.append(proposals_per_image[0]) # add one at least for rnn to go through since it does not take empty tensor
+        else:
+            ret.append(proposals_per_image[selection_idxs])
         all_num_fg.append(selection_idxs.numel())
-        ret.append(proposals_per_image[selection_idxs])
 
     storage = get_event_storage()
     storage.put_scalar("keypoint_head/num_fg_samples", np.mean(all_num_fg) if len(all_num_fg) else 0)
@@ -111,20 +115,28 @@ class BaseROIHeads(StandardROIHeads):
     """
 
     @configurable
-    def __init__(self, *args, **kwargs):
-        self.fg_ratio = kwargs.pop("fg_ratio")
-        self.num_proposal_train = kwargs.pop("num_proposal_train")
-        self.num_proposal_test = kwargs.pop("num_proposal_test")
-        self.top_k_digits = int(self.fg_ratio * self.num_proposal_train)
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs):
+        self.batch_digit_size_per_image = kwargs.pop("batch_digit_size_per_image")
+        self.digit_proposal_matcher = kwargs.pop("digit_proposal_matcher")
+        self.number_proposal_matcher = kwargs.pop("number_proposal_matcher")
+        super().__init__(**kwargs)
 
     @classmethod
-    def from_config(cls, cfg, input_shape: Dict[str, ShapeSpec]):
+    def from_config(cls, cfg, input_shape):
         ret = super().from_config(cfg, input_shape)
         ret.update({
-        "fg_ratio": cfg.MODEL.ROI_DIGIT_NECK.FG_RATIO,
-        "num_proposal_train": cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TRAIN,
-        "num_proposal_test": cfg.MODEL.ROI_DIGIT_NECK.NUM_PROPOSAL_TEST,
+        "batch_digit_size_per_image": cfg.MODEL.ROI_DIGIT_BOX_HEAD.BATCH_DIGIT_SIZE_PER_IMAGE,
+        # Matcher to assign box proposals to gt boxes
+        "digit_proposal_matcher": Matcher(
+            cfg.MODEL.ROI_DIGIT_BOX_HEAD.IOU_THRESHOLDS,
+            cfg.MODEL.ROI_HEADS.IOU_LABELS,
+            allow_low_quality_matches=False,
+        ),
+        "number_proposal_matcher": Matcher(
+            cfg.MODEL.ROI_NUMBER_BOX_HEAD.IOU_THRESHOLDS,
+            cfg.MODEL.ROI_HEADS.IOU_LABELS,
+            allow_low_quality_matches=False,
+        ),
         })
         return ret
 
@@ -229,7 +241,8 @@ class BaseROIHeads(StandardROIHeads):
             self,
             matched_idxs: torch.Tensor,
             matched_labels: torch.Tensor,
-            gt_classes: torch.Tensor) \
+            gt_classes: torch.Tensor,
+            positive_fraction: float = 1.0) \
             -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Based on the matching between N proposals and M groundtruth,
@@ -274,7 +287,7 @@ class BaseROIHeads(StandardROIHeads):
             gt_classes = torch.zeros_like(matched_idxs)
 
         sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
-            gt_classes, self.batch_digit_size_per_image, self.positive_fraction, 0
+            gt_classes, self.batch_digit_size_per_image, positive_fraction, 0
         )
 
         sampled_idxs = torch.cat([sampled_fg_idxs, sampled_bg_idxs], dim=0)
@@ -327,11 +340,11 @@ class BaseROIHeads(StandardROIHeads):
                     gt_digit_boxes, boxes
                 )
                 # (N,) idx in [0, M); (N,) label of either 1, 0, or -1
-                matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
+                matched_idxs, matched_labels = self.digit_proposal_matcher(match_quality_matrix)
                 # if gt_digit_classes is 0, then it is background
                 # returns vectors of length N', idx in [0, N); same length N', cls in [1, 10] or background 0
                 sampled_idxs, gt_digit_classes = \
-                    self._sample_digit_proposals(matched_idxs, matched_labels, gt_digit_classes)
+                    self._sample_digit_proposals(matched_idxs, matched_labels, gt_digit_classes, positive_fraction=self.positive_fraction)
                 # the indices of which person each digit proposal is associated with
                 inds = inds[sampled_idxs]  # digit -> person
                 boxes = boxes[sampled_idxs]
@@ -427,9 +440,8 @@ class BaseROIHeads(StandardROIHeads):
                     gt_number_boxes, boxes
                 )
                 # (N,) idx in [0, M); (N,) label of either 1, 0, or -1
-                matched_idxs, matched_labels = self.proposal_matcher(match_quality_matrix)
-                # if gt_digit_classes is 0, then it is background
-                # returns vectors of length N', idx in [0, N); same length N', cls in [1, 10] or background 0
+                matched_idxs, matched_labels = self.number_proposal_matcher(match_quality_matrix)
+                # only sample positive
                 sampled_idxs, gt_number_classes = \
                     self._sample_digit_proposals(matched_idxs, matched_labels, gt_number_classes)
                 # the indices of which person each digit proposal is associated with

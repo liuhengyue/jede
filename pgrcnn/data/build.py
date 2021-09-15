@@ -23,7 +23,7 @@ load_proposals_into_dataset, filter_images_with_only_crowd_annotations, filter_i
 from detectron2.data.samplers import InferenceSampler, RepeatFactorTrainingSampler, TrainingSampler
 from detectron2.data import MapDataset
 
-from pgrcnn.data import MapAugDataset, JerseyNumberDatasetMapper, WeightedTrainingSampler
+from . import MapAugDataset, JerseyNumberDatasetMapper, WeightedTrainingSampler
 
 def build_sequential_dataloader(cfg, mapper=None, set="train"):
     """
@@ -292,13 +292,15 @@ def get_detection_dataset_dicts(
     Load and prepare dataset dicts for instance detection/segmentation and semantic segmentation.
 
     Args:
-        dataset_names (list[str]): a list of dataset names
+        dataset_names (Union[str, list[str]]): a list of dataset names
         filter_empty (bool): whether to filter out images without instance annotations
         min_keypoints (int): filter out images with fewer keypoints than
             `min_keypoints`. Set to 0 to do nothing.
         proposal_files (list[str]): if given, a list of object proposal files
             that match each dataset in `dataset_names`.
     """
+    if isinstance(dataset_names, str):
+        dataset_names = [dataset_names]
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
 
@@ -344,17 +346,6 @@ def get_detection_dataset_dicts(
                 if has_jerseynumber:
                     jerseynumber_inds[i].append(data_id)
             start_ind += len(dataset_dicts[i])
-
-    #
-    # weight_per_dataset = [(1 / len(dataset_lengths)) * (1 / n) for n in dataset_lengths]
-    # dataset_lengths.insert(0, 0)
-    # dataset_lengths = np.cumsum(dataset_lengths)
-    # weights = [weight_per_dataset[i-1] for i in range(1, len(dataset_lengths)) for _ in range(dataset_lengths[i-1], dataset_lengths[i])]
-    #
-    # #
-    # COPY_PASTE_MIXABLE = ('jerseynumbers_train', 'svhn_train')
-    # check_applicable = [dataset_name in COPY_PASTE_MIXABLE for dataset_name in dataset_names]
-    # applicables = {j: check_applicable[i-1] for i in range(1, len(dataset_lengths)) for j in range(dataset_lengths[i-1], dataset_lengths[i])}
 
     dataset_dicts = list(itertools.chain.from_iterable(dataset_dicts))
 

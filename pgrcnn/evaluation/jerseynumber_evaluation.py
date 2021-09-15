@@ -211,7 +211,8 @@ class JerseyNumberEvaluator(COCOEvaluator):
             "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
             "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
             "jersey_number": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"],
-            "jersey_number_box": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"]
+            "jersey_number_box": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"],
+            "jersey_number_class": ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR", "AR50", "AR75", "ARm", "ARl"]
         }[iou_type]
 
         if coco_eval is None:
@@ -298,7 +299,7 @@ class JerseyNumberEvaluator(COCOEvaluator):
         if cfg.MODEL.KEYPOINT_ON:
             # tasks = tasks + ("person_bbox", "keypoints")
             tasks = tasks + ("jersey_number", "person_bbox", "keypoints")
-        tasks += ("digit_bbox_class_agnostic", "jersey_number_box",)
+        tasks += ("digit_bbox_class_agnostic", "jersey_number_box", "jersey_number_class")
         return tasks
 
     def process(self, inputs, outputs):
@@ -435,6 +436,15 @@ def convert_to_coco_dict(dataset_name, task_name):
         ]
         return convert_jersey_number_eval(dataset_dicts, categories)
 
+    elif task_name == "jersey_number_class":
+        class_names = [str(i) for i in range(100)]
+        categories = [
+            {"id": id, "name": name}
+            for id, name in enumerate(thing_classes)
+            if name in class_names
+        ]
+        return convert_jersey_number_eval(dataset_dicts, categories, per_instance_pred=True)
+
     elif task_name == 'jersey_number_box':
         class_names = ["jersey_number_box"]
         categories = [
@@ -450,112 +460,6 @@ def convert_to_coco_dict(dataset_name, task_name):
             if name in class_names
         ]
         return convert_person_eval(dataset_dicts, categories)
-
-    # logger.info("Converting dataset dicts into COCO format")
-    # coco_images = []
-    # coco_annotations = []
-    #
-    # for image_id, image_dict in enumerate(dataset_dicts):
-    #     coco_image = {
-    #         "id": image_dict.get("image_id", image_id),
-    #         "width": image_dict["width"],
-    #         "height": image_dict["height"],
-    #         "file_name": image_dict["file_name"],
-    #     }
-    #     coco_images.append(coco_image)
-    #
-    #     anns_per_image = image_dict["annotations"]
-    #     for annotation in anns_per_image:
-    #         bbox_mode = annotation["bbox_mode"]
-    #         if not digit_only:
-    #             # add person annotation
-    #             coco_annotation = {}
-    #             bbox = annotation["person_bbox"]
-    #             bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
-    #             if "keypoints" in annotation:
-    #                 keypoints = annotation["keypoints"]  # list[int]
-    #                 for idx, v in enumerate(keypoints):
-    #                     if idx % 3 != 2:
-    #                         # COCO's segmentation coordinates are floating points in [0, H or W],
-    #                         # but keypoint coordinates are integers in [0, H-1 or W-1]
-    #                         # For COCO format consistency we substract 0.5
-    #                         # https://github.com/facebookresearch/detectron2/pull/175#issuecomment-551202163
-    #                         keypoints[idx] = v - 0.5
-    #                 if "num_keypoints" in annotation:
-    #                     num_keypoints = annotation["num_keypoints"]
-    #                 else:
-    #                     num_keypoints = sum(kp > 0 for kp in keypoints[2::3])
-    #
-    #             # Computing areas using bounding boxes
-    #             bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-    #             area = Boxes([bbox_xy]).area()[0].item()
-    #             # Add optional fields
-    #             if "keypoints" in annotation:
-    #                 coco_annotation["keypoints"] = keypoints
-    #                 coco_annotation["num_keypoints"] = num_keypoints
-    #
-    #             coco_annotation["id"] = len(coco_annotations) + 1
-    #             coco_annotation["image_id"] = coco_image["id"]
-    #             coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
-    #             coco_annotation["area"] = area
-    #             coco_annotation["category_id"] = annotation["category_id"]
-    #             coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-    #
-    #             coco_annotations.append(coco_annotation)
-    #
-    #         for bbox_idx, bbox in enumerate(annotation["digit_bboxes"]):
-    #             # create a new dict with only COCO fields
-    #             # for each annotation
-    #             coco_annotation = {}
-    #             # bbox = np.array(annotation["digit_bboxes"])
-    #             # COCO requirement: XYWH box format
-    #             bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
-    #
-    #             # Computing areas using bounding boxes
-    #             bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-    #             area = Boxes([bbox_xy]).area()[0].item()
-    #             # COCO requirement:
-    #             #   linking annotations to images
-    #             #   "id" field must start with 1
-    #             coco_annotation["id"] = len(coco_annotations) + 1
-    #             coco_annotation["image_id"] = coco_image["id"]
-    #             coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
-    #             coco_annotation["area"] = area
-    #             coco_annotation["category_id"] = annotation["digit_ids"][bbox_idx]
-    #             coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-    #             coco_annotations.append(coco_annotation)
-    #
-    #         # add jersey number coco format
-    #         coco_annotation = {}
-    #         bbox = BoxMode.convert(annotation["number_bbox"], bbox_mode, BoxMode.XYWH_ABS)
-    #         # Computing areas using bounding boxes
-    #         bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-    #         area = Boxes([bbox_xy]).area()[0].item()
-    #         coco_annotation["id"] = len(coco_annotations) + 1
-    #         coco_annotation["image_id"] = coco_image["id"]
-    #         coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
-    #         coco_annotation["area"] = area
-    #         coco_annotation["category_id"] = annotation["number_id"]
-    #         coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-    #         coco_annotations.append(coco_annotation)
-    #
-    # logger.info(
-    #     "Conversion finished, "
-    #     f"num images: {len(coco_images)}, num annotations: {len(coco_annotations)}"
-    # )
-    #
-    # info = {
-    #     "date_created": str(datetime.datetime.now()),
-    #     "description": "Automatically generated COCO json file for Detectron2.",
-    # }
-    # coco_dict = {
-    #     "info": info,
-    #     "images": coco_images,
-    #     "annotations": coco_annotations,
-    #     "categories": categories,
-    #     "licenses": None,
-    # }
-    # return coco_dict
 
 def convert_person_eval(dataset_dicts, categories):
     coco_images = []
@@ -682,7 +586,7 @@ def convert_digit_bbox_eval(dataset_dicts, categories, class_agnostic=False):
     }
     return coco_dict
 
-def convert_jersey_number_eval(dataset_dicts, categories, class_agnostic=False):
+def convert_jersey_number_eval(dataset_dicts, categories, class_agnostic=False, per_instance_pred=False):
     coco_images = []
     coco_annotations = []
     for image_id, image_dict in enumerate(dataset_dicts):
@@ -699,20 +603,22 @@ def convert_jersey_number_eval(dataset_dicts, categories, class_agnostic=False):
             bbox_mode = annotation["bbox_mode"]
             # add jersey number coco format
             coco_annotation = {}
-            bbox = annotation["number_bbox"]
+            bbox = annotation["person_bbox"] if per_instance_pred else annotation["number_bbox"]
             if len(bbox):
-                bbox = BoxMode.convert(annotation["number_bbox"], bbox_mode, BoxMode.XYWH_ABS)
-                # Computing areas using bounding boxes
-                bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-                area = Boxes([bbox_xy]).area()[0].item()
-                coco_annotation["id"] = len(coco_annotations) + 1
-                coco_annotation["image_id"] = coco_image["id"]
-                coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
-                coco_annotation["area"] = area
-                cat_id = categories[0]['id'] if class_agnostic else annotation["number_id"]
-                coco_annotation["category_id"] = cat_id
-                coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
-                coco_annotations.append(coco_annotation)
+                number_id = annotation["number_id"]
+                if number_id > -1:
+                    bbox = BoxMode.convert(bbox, bbox_mode, BoxMode.XYWH_ABS)
+                    # Computing areas using bounding boxes
+                    bbox_xy = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+                    area = Boxes([bbox_xy]).area()[0].item()
+                    coco_annotation["id"] = len(coco_annotations) + 1
+                    coco_annotation["image_id"] = coco_image["id"]
+                    coco_annotation["bbox"] = [round(float(x), 3) for x in bbox]
+                    coco_annotation["area"] = area
+                    cat_id = categories[0]['id'] if class_agnostic else number_id
+                    coco_annotation["category_id"] = cat_id
+                    coco_annotation["iscrowd"] = annotation.get("iscrowd", 0)
+                    coco_annotations.append(coco_annotation)
 
     logger.info(
         "Conversion finished, "
@@ -793,70 +699,97 @@ def instances_to_coco_json(instances, img_id, digit_only=True, thing_classes=Non
         results.append(result)
 
     # convert digit related fields
-    digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
-    num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
-    digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
-    if len(digit_boxes) > 0:
-        digit_boxes = np.concatenate(digit_boxes)
-        digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
-        digit_boxes = digit_boxes.tolist()
-        digit_scores = [score for digit_scores in instances.digit_scores if len(digit_scores) > 0 \
-                        for score in digit_scores.tolist()]
-        digit_classes = [cls for digit_classes in instances.pred_digit_classes if len(digit_classes) > 0 \
-                         for cls in digit_classes.tolist()]
-    else:
-        digit_scores, digit_classes = [], []
+    has_digit_prediction = instances.has("pred_digit_boxes")
+    if has_digit_prediction:
+        digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
+        num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
+        # digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
+        if len(digit_boxes) > 0:
+            digit_boxes = np.concatenate(digit_boxes)
+            digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
+            digit_boxes = digit_boxes.tolist()
+            digit_scores = [score for digit_scores in instances.digit_scores if len(digit_scores) > 0 \
+                            for score in digit_scores.tolist()]
+            digit_classes = [cls for digit_classes in instances.pred_digit_classes if len(digit_classes) > 0 \
+                             for cls in digit_classes.tolist()]
+        else:
+            digit_scores, digit_classes = [], []
 
-    num_digit_instance = len(digit_boxes)
+        num_digit_instance = len(digit_boxes)
 
-    for k in range(num_digit_instance):
-        result = {
-            "image_id": img_id,
-            "category_id": digit_classes[k],
-            "bbox": digit_boxes[k],
-            "score": digit_scores[k],
-            "tasks": ["digit_bbox"]
-        }
-        results.append(result)
-
-        result = {
-            "image_id": img_id,
-            "category_id": 0,
-            "bbox": digit_boxes[k],
-            "score": digit_scores[k],
-            "tasks": ["digit_bbox_class_agnostic"]
-        }
-            # add a field for matching the digit to its person
-            # result["match_id"] = digit_box_instance_inds[k-num_person_instance]
-        results.append(result)
-
-    # add jersey number recognitions
-    jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_number_classes] \
-        if instances.has("pred_number_classes") else [[] for _ in range(num_instance)]
-    jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_number_scores] \
-        if instances.has("pred_number_scores") else [[] for _ in range(num_instance)]
-    jersey_boxes = [BoxMode.convert(number_boxes.tensor.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist() for
-                    number_boxes in instances.pred_number_boxes]
-    for j_ns, j_ss, j_bs in zip(jersey_numbers, jersey_scores, jersey_boxes):
-        for j_n, j_s, j_b in zip(j_ns, j_ss, j_bs):
-            number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
-            number_id = thing_classes.index(number_id) if number_id in thing_classes else -1
+        for k in range(num_digit_instance):
             result = {
                 "image_id": img_id,
-                "category_id": number_id,
-                "bbox": j_b,
-                "score": j_s,
-                "tasks" : ["jersey_number"]
+                "category_id": digit_classes[k],
+                "bbox": digit_boxes[k],
+                "score": digit_scores[k],
+                "tasks": ["digit_bbox"]
             }
             results.append(result)
+
             result = {
                 "image_id": img_id,
                 "category_id": 0,
-                "bbox": j_b,
-                "score": j_s,
-                "tasks": ["jersey_number_box"]
+                "bbox": digit_boxes[k],
+                "score": digit_scores[k],
+                "tasks": ["digit_bbox_class_agnostic"]
             }
+                # add a field for matching the digit to its person
+                # result["match_id"] = digit_box_instance_inds[k-num_person_instance]
             results.append(result)
+
+    # add jersey number recognitions
+    has_jersey_number_box_pred = instances.has("pred_number_boxes")
+    has_jersey_number_cls_pred = instances.has("pred_number_classes")
+    if has_jersey_number_box_pred and has_jersey_number_cls_pred:
+        jersey_boxes = [BoxMode.convert(number_boxes.tensor.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist() for
+                        number_boxes in instances.pred_number_boxes]
+        jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_number_classes] \
+            if instances.has("pred_number_classes") else [[] for _ in range(num_instance)]
+        jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_number_scores] \
+            if instances.has("pred_number_scores") else [[] for _ in range(num_instance)]
+        for j_ns, j_ss, j_bs in zip(jersey_numbers, jersey_scores, jersey_boxes):
+            for j_n, j_s, j_b in zip(j_ns, j_ss, j_bs):
+                number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
+                if number_id in thing_classes: # we may get weird number
+                    number_id = thing_classes.index(number_id)
+                    result = {
+                        "image_id": img_id,
+                        "category_id": number_id,
+                        "bbox": j_b,
+                        "score": j_s,
+                        "tasks" : ["jersey_number"]
+                    }
+                    results.append(result)
+                result = {
+                    "image_id": img_id,
+                    "category_id": 0,
+                    "bbox": j_b,
+                    "score": j_s,
+                    "tasks": ["jersey_number_box"]
+                }
+                results.append(result)
+    # per-instance classification
+    if (not has_jersey_number_box_pred) and has_jersey_number_cls_pred:
+        jersey_boxes = torch.split(instances.pred_boxes.tensor, len(instances))
+        jersey_boxes = [BoxMode.convert(number_boxes.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist() for
+                        number_boxes in jersey_boxes]
+        jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_number_classes] \
+            if instances.has("pred_number_classes") else [[] for _ in range(num_instance)]
+        jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_number_scores] \
+            if instances.has("pred_number_scores") else [[] for _ in range(num_instance)]
+        for j_ns, j_ss, j_bs in zip(jersey_numbers, jersey_scores, jersey_boxes):
+            for j_n, j_s, j_b in zip(j_ns, j_ss, j_bs):
+                number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
+                number_id = thing_classes.index(number_id) if number_id in thing_classes else -1
+                result = {
+                    "image_id": img_id,
+                    "category_id": number_id,
+                    "bbox": j_b,
+                    "score": j_s,
+                    "tasks" : ["jersey_number_class"]
+                }
+                results.append(result)
     return results
 
 

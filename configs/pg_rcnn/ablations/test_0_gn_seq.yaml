@@ -3,7 +3,7 @@ MODEL:
   ROI_JERSEY_NUMBER_DET:
     NAME: "SequenceModel"
   ROI_JERSEY_NUMBER_NECK:
-    NAME: "JerseyNumberNeck"
+    NAME: "NumberNeck"
   ROI_DIGIT_NECK:
     USE_PERSON_BOX_FEATURES: True
     USE_KEYPOINTS_FEATURES: True

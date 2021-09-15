@@ -29,7 +29,7 @@ class DigitNeckBranch(nn.Sequential):
 
         """
         super().__init__()
-        self.norm = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES.NORM
+        self.norm = cfg.MODEL.ROI_NECK_BASE_BRANCHES.NORM
         # should be changed for children class
         self.up_scale = 1
 
@@ -70,7 +70,7 @@ class PersonROIBranch(DigitNeckBranch):
         """
         super().__init__(cfg, input_shape)
         self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
-        cfg = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES.PERSON_BRANCH
+        cfg = cfg.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH
         self.up_scale = cfg.UP_SCALE
         self.deconv_kernel = cfg.DECONV_KERNEL
         conv_dims = cfg.CONV_DIMS
@@ -102,7 +102,7 @@ class KptsROIBranch(DigitNeckBranch):
         """
         super().__init__(cfg, input_shape)
         self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
-        cfg = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH
+        cfg = cfg.MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH
         self.up_scale = cfg.UP_SCALE
         self.deconv_kernel = cfg.DECONV_KERNEL
         conv_dims = cfg.CONV_DIMS
@@ -131,7 +131,7 @@ class KptsAttentionBranch(DigitNeckBranch):
     def __init__(self, cfg, input_shape):
         super(KptsAttentionBranch, self).__init__(cfg, input_shape)
         self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
-        cfg = cfg.MODEL.ROI_DIGIT_NECK_BRANCHES.KEYPOINTS_BRANCH
+        cfg = cfg.MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH
         self.up_scale = cfg.UP_SCALE
         self.deconv_kernel = cfg.DECONV_KERNEL
         in_channels = self._output_size[0]

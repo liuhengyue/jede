@@ -156,6 +156,7 @@ def get_dicts(root: str,
 if os.path.exists(DATASET_ROOT):
     DatasetCatalog.register("svhn_train", lambda: get_dicts(DATASET_ROOT, "train", num_images=-1, reset_cache=False))
     metadataCat = MetadataCatalog.get("svhn_train")
+    metadataCat.set(dataset_root=DATASET_ROOT)
     metadataCat.set(thing_classes=CLASS_NAMES)
     metadataCat.set(keypoint_names=KEYPOINT_NAMES)
     metadataCat.set(keypoint_connection_rules=KEYPOINT_CONNECTION_RULES)

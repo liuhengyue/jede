@@ -1,12 +1,17 @@
 import copy
 import logging
+import os.path
+
 import numpy as np
+import cv2
+import random
 import torch
 
 from detectron2.config import configurable
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from detectron2.data.dataset_mapper import DatasetMapper
+from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
 from . import det_utils
 from . import copy_paste_mix_images
 
@@ -44,9 +49,42 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         self.max_size_train    = kwargs.pop("max_size_train")
         self.seq_max_length    = kwargs.pop("seq_max_length")
         self.per_image_augmentations = kwargs.pop("per_image_augmentations")
+        self.helper_dataset_name = kwargs.pop("helper_dataset_name")
+        self.swap_digit = True if self.helper_dataset_name is not None else False
 
         # fmt: on
         super().__init__(*args, **kwargs)
+        self.helper_dataset = self.process_helper_dataset()
+
+    def process_helper_dataset(self, reset_cache=False):
+        if not self.swap_digit:
+            return None
+        metadata = MetadataCatalog.get(self.helper_dataset_name)
+        helper_annos_path = os.path.join(metadata.get("dataset_root"), "annotations/helper_annos.pt")
+        if os.path.exists(helper_annos_path) and (not reset_cache):
+            annos = torch.load(helper_annos_path)
+            # some are empty or too small
+            mean_size = np.median([x[0].size for x in annos])
+            annos = [x for x in annos if x[0].size > mean_size]
+            return annos
+        dataset_dicts = DatasetCatalog.get(self.helper_dataset_name)
+        # dataset_dicts = dataset_dicts[:10]
+        img_patches = []
+        labels = []
+        for dataset_dict in dataset_dicts:
+            img = utils.read_image(dataset_dict["file_name"])
+            for anno in dataset_dict["annotations"]:
+                digit_bboxes = anno["digit_bboxes"]
+                digit_ids = anno["digit_ids"]
+                labels += digit_ids
+                for box in digit_bboxes:
+                    img_patch = img[box[1]:box[3]+1, box[0]:box[2]+1, :]
+                    img_patches.append(img_patch)
+        results = list(zip(img_patches, labels))
+        torch.save(results, helper_annos_path)
+        return results
+
+
 
     @classmethod
     def from_config(cls, cfg, is_train: bool = True):
@@ -67,8 +105,9 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 "per_image_augmentations": T.AugmentationList(per_image_augmentations),
                 "copy_paste_mix": cfg.INPUT.AUG.COPY_PASTE_MIX,
                 "max_size_train": cfg.INPUT.MAX_SIZE_TRAIN,
+                "helper_dataset_name": cfg.INPUT.AUG.HELPER_DATASET_NAME,
                 # seq model
-                "seq_max_length": cfg.MODEL.ROI_JERSEY_NUMBER_DET.SEQ_MAX_LENGTH
+                "seq_max_length": cfg.MODEL.ROI_NUMBER_BOX_HEAD.SEQ_MAX_LENGTH,
             }
         )
         return ret
@@ -78,6 +117,37 @@ class JerseyNumberDatasetMapper(DatasetMapper):
             return self._process_single_dataset_dict(dataset_dict)
         elif isinstance(dataset_dict, list):
             return self._process_multiple_dataset_dicts(dataset_dict)
+
+    def apply_helper_annos(self, img, dataset_dict):
+        # we randomly apply
+        if np.random.rand(1) > 0.5:
+            return img, dataset_dict
+        img = img.copy()
+        annos = dataset_dict["annotations"]
+        for i, anno in enumerate(annos):
+            digit_bboxes = anno["digit_bboxes"]
+            digit_ids = anno["digit_ids"]
+            for j, (box, label) in enumerate(zip(digit_bboxes, digit_ids)):
+                # we could do for each digit
+                if np.random.rand(1) > 0.5:
+                    continue
+                patch, helper_label = self.helper_dataset[np.random.randint(len(self.helper_dataset))]
+                box = [int(coord + 0.5) for coord in box]
+                x1, y1, x2, y2 = box
+                h, w, _ = img.shape
+                x1 = max(x1, 0)
+                y1 = max(y1, 0)
+                x2 = min(x2, w-1)
+                y2 = min(y2, h-1)
+                patch = cv2.resize(patch, dsize=(x2-x1+1, y2-y1+1))
+                # simple random color + contrast
+                patch = (1.2 * patch - 0.2 * patch.mean()) * (np.random.uniform(0.8, 1.2, 3))
+                patch = np.clip(patch, 0, 255).astype(np.uint8)
+                img[y1:y2+1, x1:x2+1, :] = patch
+                dataset_dict["annotations"][i]["digit_ids"][j] = helper_label
+                # todo: we did not modify the number_id
+        return img, dataset_dict
+
 
     def _process_single_dataset_dict(self, dataset_dict):
         """
@@ -92,7 +162,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         # USER: Write your own image loading if it's not from a file
         image = utils.read_image(dataset_dict["file_name"], format=self.image_format)
         utils.check_image_size(dataset_dict, image)
-
+        if self.swap_digit:
+            image, dataset_dict = self.apply_helper_annos(image, dataset_dict)
         aug_input = T.AugInput(image, sem_seg=None)
         transforms = self.augmentations(aug_input)
         image = aug_input.image
@@ -151,6 +222,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                                                  max_size=self.max_size_train,
                                                  augmentations=self.per_image_augmentations)
             image = dataset_dict["image"]
+            if self.swap_digit:
+                image, dataset_dict = self.apply_helper_annos(image, dataset_dict)
             aug_input = T.AugInput(image, sem_seg=None)
             transforms = self.augmentations(aug_input)
             image = aug_input.image

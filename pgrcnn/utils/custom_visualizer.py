@@ -216,6 +216,9 @@ class JerseyNumberVisualizer(Visualizer):
         instances_list = []
         for i in range(len(data['instances'])):
             instance = data['instances'][i]
+            digit_ids = torch.cat(instance.gt_digit_classes).numpy() if instance.has('gt_digit_classes') else np.empty((0,))
+            number_id = ''.join([self.metadata.thing_classes[digit_id] for digit_id in digit_ids])
+            number_id = self.metadata.thing_classes.index(number_id) if number_id in self.metadata.thing_classes else -1
             # tensor to numpy
             instances_list.append({
             "person_bbox": instance.gt_boxes.tensor.numpy() if instance.has('gt_boxes') else np.empty((0, 4)),
@@ -224,7 +227,8 @@ class JerseyNumberVisualizer(Visualizer):
             "digit_ids": torch.cat(instance.gt_digit_classes).numpy() if instance.has('gt_digit_classes') else np.empty((0,)),
             "category_id": instance.gt_classes.numpy() if instance.has('gt_classes') else np.empty((0,)),
             "number_bbox": Boxes.cat(instance.gt_number_boxes).tensor.numpy() if instance.has('gt_number_boxes') else np.empty((0, 4)),
-            "number_id": instance.gt_number_ids.numpy() if instance.has('gt_number_ids') else np.empty((0,)),
+            "number_id": np.asarray([number_id])
+            # "number_id": instance.gt_number_ids.numpy() if instance.has('gt_number_ids') else np.empty((0,)),
             })
         return {"annotations": instances_list}
 
@@ -292,7 +296,7 @@ class JerseyNumberVisualizer(Visualizer):
 
         return self.output
 
-    def draw_single_instance(self, instance, draw_digit=False):
+    def draw_single_instance(self, instance, draw_digit=True):
         """
         instance can be either from detection or gt
         Given a instance dict, draw the corresponding

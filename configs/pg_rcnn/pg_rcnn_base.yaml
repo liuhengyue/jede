@@ -1,5 +1,7 @@
 _BASE_: "../../detectron2/configs/COCO-Keypoints/keypoint_rcnn_R_50_FPN_1x.yaml"
 MODEL:
+  DEVICE: cuda # cpu or cuda
+  WEIGHTS: "detectron2://COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x/137849621/model_final_a6e10b.pkl"
   META_ARCHITECTURE: "PGRCNN"
   KEYPOINT_ON: True
   ROI_HEADS:
@@ -8,15 +10,18 @@ MODEL:
   ROI_KEYPOINT_HEAD:
     NAME: KPGRCNNHead
     NUM_KEYPOINTS: 17
-  DEVICE: cuda # cpu or cuda
-  WEIGHTS: "detectron2://COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x/137849621/model_final_a6e10b.pkl"
   ROI_DIGIT_NECK:
     NAME: DigitNeck
-    NUM_DIGIT_CLASSES: 10
-    DEFORMABLE: False
-    NUM_CONV: 4
-    CONV_DIM: 64
-    NORM: ""
+  ROI_NECK_BASE_BRANCHES:
+    NORM: "GN"
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+      UP_SCALE: 1
+      DECONV_KERNEL: 4
+    KEYPOINTS_BRANCH:
+      NAME: "KptsROIBranch" # "KptsROIBranch"
+      DECONV_KERNEL: 4
+      UP_SCALE: 1
 DATASETS:
   TRAIN: ("jerseynumbers_train",)
   TEST: ("jerseynumbers_val",)

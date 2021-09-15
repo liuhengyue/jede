@@ -1,0 +1,20 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  ROI_HEADS:
+    NAME: PGROIHeads
+    PROPOSAL_APPEND_GT: True
+    ENABLE_POSE_GUIDE: True
+  ROI_NUMBER_BOX_HEAD:
+    NUM_CONV: 0
+    NUM_FC: 2
+    POOLER_RESOLUTION: (7, 7)
+  ROI_NUMBER_NECK:
+    NAME: "NumberNeck"
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+INPUT:
+  AUG:
+    HELPER_DATASET_NAME: svhn_train
+    COPY_PASTE_MIX: 5
+OUTPUT_DIR: ./output/pg_rcnn/pred_number/test_0_gn_digit_number_per_box_swapdigit_copypastemix

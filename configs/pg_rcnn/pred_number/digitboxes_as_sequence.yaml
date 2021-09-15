@@ -1,0 +1,65 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+#  PROPOSAL_GENERATOR:
+#    NAME: "PrecomputedProposals"
+  RPN:
+    PRE_NMS_TOPK_TRAIN: 128  # Per FPN level
+    POST_NMS_TOPK_TRAIN: 64
+  ROI_HEADS:
+    PROPOSAL_APPEND_GT: False
+    ENABLE_POSE_GUIDE: True
+  ROI_JERSEY_NUMBER_DET:
+    NAME: "JerseyNumberHead" # "SequenceModel"
+    REQUIRES_ROI_POOL: False
+#    NUMBER_POOLER_RESOLUTION: (7, 7, 7)
+    SEQUENCE_RESOLUTION: (7, 7, 7)
+  ROI_JERSEY_NUMBER_NECK:
+    NAME: None # NumberNeck
+#    NAME: None
+  ROI_NECK_BASE:
+    USE_PERSON_BOX_FEATURES: True
+    USE_KEYPOINTS_FEATURES: True
+    FUSION_TYPE: "cat" # cat sum multiply
+    NORM: "GN"
+    NUM_PROPOSAL_TRAIN: 100
+  ROI_NECK_OUTPUT:
+    NORM: "GN"
+  ROI_DIGIT_NECK:
+    NAME: "DigitNeck"
+  ROI_NECK_BASE_BRANCHES:
+    NORM: "GN"
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+      UP_SCALE: 1
+      DECONV_KERNEL: 4
+    KEYPOINTS_BRANCH:
+      NAME: "KptsROIBranch" # "KptsROIBranch"
+      DECONV_KERNEL: 4
+      UP_SCALE: 1
+DATASETS:
+  TRAIN: ("jerseynumbers_train", ) # ("svhn_train", "keypoints_coco_2017_val_100") # jerseynumbers_train
+  NUM_IMAGES: 1 # change the number of images to load
+  TRAIN_VIDEO_IDS: [1]
+  TEST_VIDEO_IDS: [1]
+INPUT:
+  MIN_SIZE_TRAIN: (256,)
+  MAX_SIZE_TRAIN: 320
+  MAX_SIZE_TEST: 320
+  AUG:
+    COPY_PASTE_MIX: 22
+    RANDCOLOR: False
+#    COLOR: True
+SOLVER:
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (1500, )
+  MAX_ITER: 2000
+  WARMUP_FACTOR: 0.002
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 500
+DATALOADER:
+  SHUFFLE: False
+  NUM_WORKERS: 2
+  SAMPLER_TRAIN: "WeightedTrainingSampler"
+
+OUTPUT_DIR: ./output/pg_rcnn/tests/baseline

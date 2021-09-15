@@ -10,7 +10,6 @@ from detectron2.config import configurable
 from detectron2.layers import Linear, ShapeSpec, batched_nms, cat, cross_entropy, nonzero_tuple
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.utils.events import get_event_storage
-from pgrcnn.structures.digitboxes import DigitBoxes
 from pgrcnn.structures import Boxes, Players
 
 __all__ = ["fast_rcnn_inference", "DigitOutputLayers"]
@@ -156,9 +155,9 @@ def fast_rcnn_inference_single_image(
     scores = scores[filter_mask]
     instance_idx = instance_idx[filter_inds[:, 0]]
     # Apply per-class NMS
-    cls_ids = filter_inds[:, 1] if per_class_nms else torch.zeros_like(filter_inds[:, 1])
-    nms_method = nms_per_image # nms_per_player
-    boxes, scores, cls_ids = nms_method(boxes, scores, cls_ids, instance_idx, N, nms_thresh, topk_per_image)
+    cls_ids = filter_inds[:, 1]
+    nms_method = nms_per_image # nms_per_player nms_per_image
+    boxes, scores, cls_ids = nms_method(boxes, scores, cls_ids, instance_idx, N, nms_thresh, topk_per_image, per_class_nms)
 
     # boxes, scores, cls_ids, number_preds, number_scores = jersey_number_inference(boxes, scores, cls_ids, number_score_thresh)
     # assign fields for players
@@ -173,8 +172,10 @@ def fast_rcnn_inference_single_image(
 
     return result, filter_inds[:, 0]
 
-def nms_per_image(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image):
-    keep = batched_nms(boxes, scores, cls_ids, nms_thresh)
+def nms_per_image(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image, per_class_nms=True):
+    # proxy class ids
+    proxy_cls_ids = cls_ids if per_class_nms else torch.zeros_like(cls_ids)
+    keep = batched_nms(boxes, scores, proxy_cls_ids, nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
     # recover digit class ids by adding one
@@ -190,15 +191,17 @@ def nms_per_image(boxes, scores, cls_ids, instance_inds, num_instances, nms_thre
     cls_ids = list(torch.split(cls_ids, counts))
     return boxes, scores, cls_ids
 
-def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image):
+def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image, per_class_nms=True):
     topk_per_instance = topk_per_image // num_instances
     # assign each box to its player first, then nms
     counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
     boxes = list(torch.split(boxes, counts))
     scores = list(torch.split(scores, counts))
+    proxy_cls_ids = cls_ids if per_class_nms else torch.zeros_like(cls_ids)
     cls_ids = list(torch.split(cls_ids, counts))
+    proxy_cls_ids = list(torch.split(proxy_cls_ids, counts))
     keeps = [batched_nms(boxes_per_instance, scores_per_instance, cls_ids_per_instance, nms_thresh)
-             for boxes_per_instance, scores_per_instance, cls_ids_per_instance in zip(boxes, scores, cls_ids)]
+             for boxes_per_instance, scores_per_instance, cls_ids_per_instance in zip(boxes, scores, proxy_cls_ids)]
     if topk_per_instance >= 0:
         keeps = [keep[:topk_per_instance] for keep in keeps]
     for i, (keep, box, score, cls_id) in enumerate(zip(keeps, boxes, scores, cls_ids)):
@@ -303,13 +306,13 @@ class DigitOutputLayers(nn.Module):
             "input_shape": input_shape,
             "box2box_transform": Box2BoxTransform(weights=cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_WEIGHTS),
             # fmt: off
-            "num_classes": cfg.MODEL.ROI_DIGIT_NECK.NUM_DIGIT_CLASSES, # this is the number of digits
-            "cls_agnostic_bbox_reg": cfg.MODEL.ROI_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
+            "num_classes": cfg.MODEL.ROI_DIGIT_BOX_HEAD.NUM_DIGIT_CLASSES, # this is the number of digits
+            "cls_agnostic_bbox_reg": cfg.MODEL.ROI_DIGIT_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
             "smooth_l1_beta": cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA,
-            "test_score_thresh": cfg.MODEL.ROI_DIGIT_NECK.SCORE_THRESH_TEST,
-            "test_nms_thresh": cfg.MODEL.ROI_DIGIT_NECK.NMS_THRESH_TEST,
+            "test_score_thresh": cfg.MODEL.ROI_DIGIT_BOX_HEAD.SCORE_THRESH_TEST,
+            "test_nms_thresh": cfg.MODEL.ROI_DIGIT_BOX_HEAD.NMS_THRESH_TEST,
             "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
-            "box_reg_loss_type": cfg.MODEL.ROI_DIGIT_NECK.BBOX_REG_LOSS_TYPE,
+            "box_reg_loss_type": cfg.MODEL.ROI_DIGIT_BOX_HEAD.BBOX_REG_LOSS_TYPE,
             "loss_weight": {"loss_box_reg": cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_LOSS_WEIGHT},
             # fmt: on
         }
@@ -339,6 +342,14 @@ class DigitOutputLayers(nn.Module):
         """
         scores, proposal_deltas = predictions
 
+        # we split and assign to each proposal
+        num_proposal_digit_boxes = [[len(instance) for instance in p.proposal_digit_boxes] for p in proposals]
+        scores_all = torch.split(scores, [sum(num_per_image) for num_per_image in num_proposal_digit_boxes])
+        for proposals_per_image, scores_per_image, num_proposal_digit_boxes_per_image in zip(proposals,
+                                                                                            scores_all,
+                                                                                            num_proposal_digit_boxes):
+            proposal_scores_per_image = torch.split(scores_per_image, num_proposal_digit_boxes_per_image)
+            proposals_per_image.proposal_digit_box_scores = list(proposal_scores_per_image)
         # parse box regression outputs
         if len(proposals) and any([p.has("proposal_digit_boxes") for p in proposals]):
             proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor.to(proposal_deltas.device)
@@ -524,37 +535,3 @@ class DigitOutputLayers(nn.Module):
         num_prop_per_image = [sum([len(p_digit_boxes) for p_digit_boxes in p.get("proposal_digit_boxes")]) for p in proposals]
         probs = F.softmax(scores, dim=-1)
         return probs.split(num_prop_per_image, dim=0)
-
-def paired_iou(boxes1: Boxes, boxes2: Boxes) -> torch.Tensor:
-    """
-    Given two lists of boxes of size N,
-    compute the IoU (intersection over union)
-    between __all__ N pairs of boxes.
-    The box order must be (xmin, ymin, xmax, ymax).
-
-    Args:
-        boxes1,boxes2 (Boxes): two `Boxes`. Contains N boxes, respectively.
-
-    Returns:
-        Tensor: IoU, sized [N].
-    """
-    area1 = boxes1.area()
-    area2 = boxes2.area()
-
-    boxes1, boxes2 = boxes1.tensor, boxes2.tensor
-
-    width_height = torch.min(boxes1[:, 2:], boxes2[:, 2:]) - torch.max(
-        boxes1[:, :2], boxes2[:, :2]
-    )  # [N,2]
-
-    width_height.clamp_(min=0)  # [N,2]
-    inter = width_height.prod(dim=-1)  # [N]
-    del width_height
-
-    # handle empty boxes
-    iou = torch.where(
-        inter > 0,
-        inter / (area1 + area2 - inter),
-        torch.zeros(1, dtype=inter.dtype, device=inter.device),
-    )
-    return iou

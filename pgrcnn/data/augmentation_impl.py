@@ -85,7 +85,7 @@ def paste_image(target_image, img, alpha=0.5):
 def copy_paste_mix_images(dataset_dicts,
                           format=None,
                           max_size=800,
-                          min_scale=0.2,
+                          min_scale=0.5,
                           # max_scale=1.0,
                           interp=Image.BILINEAR,
                           augmentations=None

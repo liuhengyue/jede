@@ -40,7 +40,7 @@ class JerseyNumberEval(COCOeval):
             computeIoU = self.computeIoU
         elif p.iouType == 'keypoints':
             computeIoU = self.computeOks
-        if self.task_type in {"jersey_number", "jersey_number_box"}:
+        if self.task_type in {"jersey_number", "jersey_number_box", "jersey_number_class"}:
             computeIoU = self.computeIoU
         if self.task_type == "digit_bbox_class_agnostic":
             computeIoU = self.computeIoU

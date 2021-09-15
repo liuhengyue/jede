@@ -15,7 +15,7 @@ from pgrcnn.structures.players import Players as Instances
 
 _TOTAL_SKIPPED = 0
 
-def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_kpts=0):
+def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_kpts=2):
     """
     Arguments:
         pred_keypoint_logits (Tensor): A tensor of shape (N, K, S, S) where N is the total number
@@ -42,7 +42,7 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
     valid_rois = []
     sampled_instances = []
     keypoint_side_len = pred_keypoint_logits.shape[2]
-    for instances_per_image in instances:
+    for i, instances_per_image in enumerate(instances):
         # add support for svhn images
         if len(instances_per_image) == 0 or (not instances_per_image.has("gt_keypoints")):
             sampled_instances.append(instances_per_image)
@@ -58,7 +58,10 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         valid_rois.append(valid_roi_per_image)
         # sample the instances for this image
         valid_roi_per_image = torch.nonzero(valid_roi_per_image).squeeze(1)
-        sampled_instances.append(instances_per_image[valid_roi_per_image])
+        # so we may get images without gt keypoints, but we still need to have instances for future
+        # do not sample if no gt
+        if valid_roi_per_image.numel():
+            instances[i] = instances_per_image[valid_roi_per_image]
 
     if len(heatmaps):
         keypoint_targets = cat(heatmaps, dim=0)
@@ -76,9 +79,9 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         _TOTAL_SKIPPED += 1
         storage = get_event_storage()
         storage.put_scalar("kpts_num_skipped_batches", _TOTAL_SKIPPED, smoothing_hint=False)
+        # todo: we add one instance if no gt keypoints, verify if pred_keypoint_logits is the same size with instances
         return pred_keypoint_logits.sum() * 0, \
-               torch.empty((0, K, H, W), dtype=torch.float32, device=pred_keypoint_logits.device), \
-               sampled_instances
+               pred_keypoint_logits
 
     # shape (N', 4, 56, 56)
     pred_keypoint_logits_valid = pred_keypoint_logits[valid_rois]
@@ -97,7 +100,7 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         normalizer = valid.numel()
     keypoint_loss /= normalizer
 
-    return keypoint_loss, pred_keypoint_logits_valid, sampled_instances
+    return keypoint_loss, pred_keypoint_logits_valid
 
 def keypoint_rcnn_inference(pred_keypoint_logits, pred_instances):
     """
@@ -166,17 +169,17 @@ class KPGRCNNHead(KRCNNConvDeconvUpsampleHead):
             normalizer = (
                 None if self.loss_normalizer == "visible" else num_images * self.loss_normalizer
             )
-            kpt_loss, sampled_keypoints_logits, sampled_instances = keypoint_rcnn_loss(x, instances, normalizer=normalizer)
+            kpt_loss, sampled_keypoints_logits = keypoint_rcnn_loss(x, instances, normalizer=normalizer)
             # todo: maybe modify __len__?
-            num_instances_per_image = [len(sampled_instance) if sampled_instance.has("proposal_boxes") else 0 for sampled_instance in sampled_instances]
+            num_instances_per_image = [len(sampled_instance) if sampled_instance.has("proposal_boxes") else 0 for sampled_instance in instances]
             # map the keypoints logits back with each image
             sampled_keypoints_logits = sampled_keypoints_logits.split(num_instances_per_image, dim=0)
-            for keypoint_logits_per_image, instances_per_image in zip(sampled_keypoints_logits, sampled_instances):
+            for keypoint_logits_per_image, instances_per_image in zip(sampled_keypoints_logits, instances):
                 if instances_per_image.has("proposal_boxes"):
                     instances_per_image.pred_keypoints_logits = keypoint_logits_per_image
             return {
                 "loss_keypoint": kpt_loss * self.loss_weight
-            }, sampled_instances
+            }, instances
         else:
             keypoint_rcnn_inference(x, instances)
             return instances

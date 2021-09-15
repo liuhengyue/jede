@@ -1,0 +1,39 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  ROI_HEADS:
+    NAME: PGMaskingROIHeads
+    PROPOSAL_APPEND_GT: True
+    ENABLE_POSE_GUIDE: True
+  ROI_NUMBER_BOX_HEAD:
+    NUM_CONV: 0
+    NUM_FC: 0
+  ROI_JERSEY_NUMBER_NECK:
+    NAME: "NumberNeck" # NumberNeck
+#    NAME: None
+  ROI_NECK_BASE:
+    USE_PERSON_BOX_FEATURES: True
+    USE_KEYPOINTS_FEATURES: True
+    FUSION_TYPE: "cat" # cat sum multiply
+    NORM: "GN"
+    NUM_PROPOSAL_TRAIN: 100
+  ROI_NUMBER_NECK_OUTPUT:
+    OUTPUT_HEAD_NAMES: ("center",)
+    OUTPUT_HEAD_CHANNELS: (1,)
+    OUTPUT_HEAD_WEIGHTS: (1.0,)
+    NORM: "GN"
+  ROI_DIGIT_NECK:
+    NAME: "" # DigitNeck
+  ROI_NECK_BASE_BRANCHES:
+    NORM: "GN"
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+      UP_SCALE: 1
+      DECONV_KERNEL: 4
+    KEYPOINTS_BRANCH:
+      NAME: "KptsROIBranch" # "KptsROIBranch"
+      DECONV_KERNEL: 4
+      UP_SCALE: 1
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [1]
+OUTPUT_DIR: ./output/pg_rcnn/pred_number/test_0_gn_number_per_ins

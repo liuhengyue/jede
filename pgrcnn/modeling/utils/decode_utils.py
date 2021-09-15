@@ -157,12 +157,14 @@ def _topk(scores, K=40, largest=True):
     return topk_score, topk_inds, topk_clses, topk_ys, topk_xs
 
 
-def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100,
+def ctdet_decode(heat, wh, reg, rois,
+                 cat_spec_wh=False,
+                 K=100,
                  size_target_type="wh",
                  size_target_scale="feature",
                  training=True,
                  fg_ratio=1/2,
-                 offset=0):
+                 offset=0.0):
     batch, cat, height, width = heat.size()
 
     if batch == 0:
@@ -198,8 +200,9 @@ def ctdet_decode(heat, wh, rois, reg=None, cat_spec_wh=False, K=100,
     # we may have values larger than the feature box
     wh.clamp_(max=height)
     # we can add a offset manually to enlarge the detected bounding boxes
-    # wh[..., 1].add_(offset)
-    # wh += offset
+    # if not training:
+    #     wh[..., 1].add_(offset)
+        # wh += offset
     if cat_spec_wh:
         wh = wh.view(batch, K, cat, -1)
         clses_ind = clses.view(batch, K, 1, 1).expand(batch, K, 1, wh.shape[-1]).long()

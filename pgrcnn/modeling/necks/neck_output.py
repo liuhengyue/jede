@@ -12,14 +12,14 @@ from detectron2.utils.registry import Registry
 from detectron2.modeling.backbone.resnet import DeformBottleneckBlock
 
 from .digit_neck_branches import build_digit_neck_branch
-ROI_JERSEY_NUMBER_NECK_REGISTRY = Registry("ROI_JERSEY_NUMBER_NECK")
+ROI_NECK_OUTPUT_REGISTRY = Registry("ROI_NECK_OUTPUT")
 
 
-@ROI_JERSEY_NUMBER_NECK_REGISTRY.register()
-class JerseyNumberNeck(nn.Module):
+@ROI_NECK_OUTPUT_REGISTRY.register()
+class FCNNeckOutput(nn.Module):
     def __init__(self,
                  cfg: detectron2.config.CfgNode,
-                 input_shape: ShapeSpec
+                 input_shapes: ShapeSpec
                  ):
         """
 
@@ -44,22 +44,23 @@ class JerseyNumberNeck(nn.Module):
 
                 """
         super().__init__()
-        cfg_roi_digit_neck = cfg.MODEL.ROI_DIGIT_NECK
-        self.conv_norm = cfg_roi_digit_neck.NORM
-        self.output_head_names = cfg_roi_digit_neck.OUTPUT_HEAD_NAMES
-        self.output_head_channels = cfg_roi_digit_neck.OUTPUT_HEAD_CHANNELS
-        conv_dims = [cfg_roi_digit_neck.CONV_DIM] * cfg_roi_digit_neck.NUM_CONV
+        # cfg is not the full cfg: either cfg.MODEL.ROI_NECK_OUTPUT or ROI_NUMBER_NECK_OUTPUT
+        self.conv_norm = cfg.NORM
+        self.output_head_names = cfg.OUTPUT_HEAD_NAMES
+        self.output_head_channels = cfg.OUTPUT_HEAD_CHANNELS
+        conv_dims = [cfg.CONV_DIM] * cfg.NUM_CONV
         assert len(conv_dims) > 0
-        self.use_deform = cfg_roi_digit_neck.DEFORMABLE
+        self.use_deform = cfg.DEFORMABLE
 
-        self.focal_bias = cfg_roi_digit_neck.FOCAL_BIAS
+        self.focal_bias = cfg.FOCAL_BIAS
         activations = {name: activation for name, activation in zip(self.output_head_names, (torch.sigmoid, F.relu, torch.sigmoid))}
-        in_channels = input_shape.channels
 
+        in_channels = input_shapes.channels
         for name, out_channels in zip(self.output_head_names, self.output_head_channels):
             activation = activations[name]
             module = self._init_output_layers(conv_dims, in_channels, out_channels, activation=activation)
             self.add_module(name, module)
+        self.size_reg = hasattr(self, "size")
         self.offset_reg = hasattr(self, "offset")
         self._init_weights()
 
@@ -82,21 +83,12 @@ class JerseyNumberNeck(nn.Module):
 
         # for output layer, init with CenterNet params
         if hasattr(self, "center"):
-            # for m in self.center.modules():
-            #     if isinstance(m, Conv2d):
-            #         normal_init(m, std=0.001)
             nn.init.normal_(self.center[-1].weight, std=0.001)
             self.center[-1].bias.data.fill_(self.focal_bias)
         if hasattr(self, "size"):
-            # for m in self.size.modules():
-            #     if isinstance(m, Conv2d):
-            #         normal_init(m, std=0.001)
             nn.init.normal_(self.size[-1].weight, std=0.001)
             self.size[-1].bias.data.fill_(0.)
         if hasattr(self, "offset"):
-            # for m in self.offset.modules():
-            #     if isinstance(m, Conv2d):
-            #         normal_init(m, std=0.001)
             nn.init.normal_(self.offset[-1].weight, std=0.001)
             self.offset[-1].bias.data.fill_(0.)
 
@@ -131,9 +123,11 @@ class JerseyNumberNeck(nn.Module):
         return nn.Sequential(*modules)
 
     def forward(self, x):
-        #  x will be feed into different prediction heads
         pred_center_heatmaps = self.center(x)
-        pred_scale_heatmaps = self.size(x)
+        if self.size_reg:
+            pred_scale_heatmaps = self.size(x)
+        else:
+            pred_scale_heatmaps = None
         if self.offset_reg:
             pred_offset_heatmaps = self.offset(x)
         else:
@@ -142,9 +136,11 @@ class JerseyNumberNeck(nn.Module):
         return [pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps]
 
 
-def build_jersey_number_neck(cfg, input_shapes):
+def build_neck_output(cfg, input_shapes):
     """
     Build a box head defined by `cfg.MODEL.ROI_BOX_HEAD.NAME`.
     """
-    name = cfg.MODEL.ROI_JERSEY_NUMBER_NECK.NAME
-    return ROI_JERSEY_NUMBER_NECK_REGISTRY.get(name)(cfg, input_shapes)
+    name = cfg.NAME
+    if not name or name == '':
+        return None
+    return ROI_NECK_OUTPUT_REGISTRY.get(name)(cfg, input_shapes)
