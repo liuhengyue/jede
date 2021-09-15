@@ -40,12 +40,11 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
     # if at least 3 keypoints are valid for one roi, we consider it as a roi to train
     # the transformation matrix regression
     valid_rois = []
-    sampled_instances = []
+    sampled_rois = []
     keypoint_side_len = pred_keypoint_logits.shape[2]
     for i, instances_per_image in enumerate(instances):
         # add support for svhn images
         if len(instances_per_image) == 0 or (not instances_per_image.has("gt_keypoints")):
-            sampled_instances.append(instances_per_image)
             continue
         keypoints = instances_per_image.gt_keypoints
         heatmaps_per_image, valid_per_image = keypoints.to_heatmap(
@@ -55,21 +54,24 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         valid.append(valid_per_image.view(-1))
         # sub-sample the ROIs with visible number of keypoints at least 3, optional
         valid_roi_per_image = torch.sum(valid_per_image == 1, dim=1) > min_visible_kpts - 1
+
         valid_rois.append(valid_roi_per_image)
         # sample the instances for this image
-        valid_roi_per_image = torch.nonzero(valid_roi_per_image).squeeze(1)
+        sampled_roi_per_image = valid_roi_per_image.clone()
+        if not valid_roi_per_image.any():
+            sampled_roi_per_image[0] = True
+        # if no valid for this image, we still need at least one instance
+        sampled_rois.append(sampled_roi_per_image)
         # so we may get images without gt keypoints, but we still need to have instances for future
         # do not sample if no gt
-        if valid_roi_per_image.numel():
-            instances[i] = instances_per_image[valid_roi_per_image]
+        instances[i] = instances_per_image[sampled_roi_per_image]
+
+    sampled_rois = cat(sampled_rois, dim=0)
 
     if len(heatmaps):
         keypoint_targets = cat(heatmaps, dim=0)
         valid = cat(valid, dim=0).to(dtype=torch.uint8)
         valid = torch.nonzero(valid).squeeze(1)
-        # 'valid_rois' is a list of tensors appended for each image
-        valid_rois = cat(valid_rois, dim=0).to(dtype=torch.uint8)
-        valid_rois = torch.nonzero(valid_rois).squeeze(1)
 
     N, K, H, W = pred_keypoint_logits.shape
     # torch.mean (in binary_cross_entropy_with_logits) doesn't
@@ -81,10 +83,10 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         storage.put_scalar("kpts_num_skipped_batches", _TOTAL_SKIPPED, smoothing_hint=False)
         # todo: we add one instance if no gt keypoints, verify if pred_keypoint_logits is the same size with instances
         return pred_keypoint_logits.sum() * 0, \
-               pred_keypoint_logits
+               pred_keypoint_logits[sampled_rois]
 
     # shape (N', 4, 56, 56)
-    pred_keypoint_logits_valid = pred_keypoint_logits[valid_rois]
+    pred_keypoint_logits_valid = pred_keypoint_logits[sampled_rois]
 
 
     pred_keypoint_logits = pred_keypoint_logits.view(N * K, H * W)
