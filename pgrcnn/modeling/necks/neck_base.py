@@ -10,7 +10,7 @@ from detectron2.config import configurable
 from detectron2.layers import Conv2d, ConvTranspose2d, Linear, ShapeSpec, get_norm, ModulatedDeformConv
 from detectron2.utils.registry import Registry
 from detectron2.modeling.backbone.resnet import DeformBottleneckBlock
-from ..layers import CoordAtt, DualAttention
+from ..layers import CoordAtt, DualAttention, PositionalEncoder
 
 from .digit_neck_branches import build_digit_neck_branch
 ROI_NECK_BASE_REGISTRY = Registry("ROI_NECK_BASE")
@@ -49,6 +49,7 @@ class NeckBase(nn.Module):
         cfg_roi_neck_base_branches = cfg.MODEL.ROI_NECK_BASE_BRANCHES
         self.use_person_features = cfg_roi_neck_base.USE_PERSON_BOX_FEATURES
         self.use_kpts_features = cfg_roi_neck_base.USE_KEYPOINTS_FEATURES
+        self.add_pe = cfg_roi_neck_base.PE
 
         if self.use_person_features:
             module = build_digit_neck_branch(cfg_roi_neck_base_branches.PERSON_BRANCH.NAME, cfg,
@@ -98,7 +99,10 @@ class NeckBase(nn.Module):
         elif attn_name == "DualAttention":
             self.attn = DualAttention(in_channels)
             self.attn_on = True
-
+        if self.add_pe:
+            # double for now
+            self.pe_encoder = PositionalEncoder(in_channels, self._output_size[1], self._output_size[2])
+            self._output_size = (in_channels + in_channels, self._output_size[1], self._output_size[2])
 
         self._init_weights()
 
@@ -147,6 +151,8 @@ class NeckBase(nn.Module):
             x = kpts_features if self.use_kpts_features else person_features
         if self.attn_on:
             x = self.attn(x)
+        if self.add_pe:
+            x = self.pe_encoder(x)
         #  x will be feed into different prediction heads
         return x
 

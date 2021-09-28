@@ -59,7 +59,7 @@ def select_foreground_proposals(
     return fg_proposals, fg_selection_masks
 
 
-def select_proposals_with_visible_keypoints(proposals: List[Players]) -> List[Players]:
+def select_proposals_with_visible_keypoints(proposals: List[Players], max_instance: int = 50) -> List[Players]:
     """
     Args:
         proposals (list[Instances]): a list of N Instances, where N is the
@@ -101,6 +101,7 @@ def select_proposals_with_visible_keypoints(proposals: List[Players]) -> List[Pl
         if selection_idxs.numel() == 0 and len(proposals_per_image) > 0:
             ret.append(proposals_per_image[0]) # add one at least for rnn to go through since it does not take empty tensor
         else:
+            selection_idxs = selection_idxs[:max_instance]
             ret.append(proposals_per_image[selection_idxs])
         all_num_fg.append(selection_idxs.numel())
 

@@ -58,15 +58,15 @@ def keypoint_rcnn_loss(pred_keypoint_logits, instances, normalizer, min_visible_
         valid_rois.append(valid_roi_per_image)
         # sample the instances for this image
         sampled_roi_per_image = valid_roi_per_image.clone()
+        # if no valid for this image, we still need at least one instance
         if not valid_roi_per_image.any():
             sampled_roi_per_image[0] = True
-        # if no valid for this image, we still need at least one instance
         sampled_rois.append(sampled_roi_per_image)
         # so we may get images without gt keypoints, but we still need to have instances for future
         # do not sample if no gt
         instances[i] = instances_per_image[sampled_roi_per_image]
 
-    sampled_rois = cat(sampled_rois, dim=0)
+    sampled_rois = cat(sampled_rois, dim=0) if len(sampled_rois) else torch.empty((0,), dtype=torch.long, device=pred_keypoint_logits.device)
 
     if len(heatmaps):
         keypoint_targets = cat(heatmaps, dim=0)

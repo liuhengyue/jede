@@ -17,6 +17,7 @@ from detectron2.layers import (
 )
 from detectron2.utils.registry import Registry
 from detectron2.modeling.backbone.resnet import DeformBottleneckBlock
+from ..layers import PositionalEncoder
 
 ROI_DIGIT_NECK_BRANCHES_REGISTRY = Registry("ROI_DIGIT_NECK_BRANCHES")
 
@@ -103,11 +104,19 @@ class KptsROIBranch(DigitNeckBranch):
         super().__init__(cfg, input_shape)
         self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
         cfg = cfg.MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH
+        self.add_pe = cfg.PE
         self.up_scale = cfg.UP_SCALE
         self.deconv_kernel = cfg.DECONV_KERNEL
         conv_dims = cfg.CONV_DIMS
         kernel_size, stride, padding = cfg.CONV_SPECS
-        in_channels = input_shape.channels
+        in_channels = input_shape.channels # should be 17
+        # add pe first
+        if self.add_pe:
+            pe_dim = 32
+            self.add_module("pe_encoder", PositionalEncoder(pe_dim, self._output_size[1], self._output_size[2]))
+            in_channels = in_channels + pe_dim
+            self._output_size = (in_channels, self._output_size[1], self._output_size[2])
+
         for idx, layer_channels in enumerate(conv_dims, 1):
             module = Conv2d(in_channels, layer_channels, kernel_size, stride=stride, padding=padding,
                             norm=get_norm(self.norm, layer_channels), activation=F.relu)
@@ -121,9 +130,27 @@ class KptsROIBranch(DigitNeckBranch):
             )
         else:
             self.deconv = None
+
         self._output_size = (conv_dims[-1],
                              self._output_size[1] * self.up_scale * max(1, self.deconv_kernel // 2),
                              self._output_size[2] * self.up_scale * max(1, self.deconv_kernel // 2))
+
+
+    def forward(self, x: Union[torch.Tensor, None]):
+        """
+        Args:
+            x: input 4D region feature(s) provided by :class:`ROIHeads`.
+
+        Returns:
+            Output features.
+        """
+        if x is not None:
+            for layer in self:
+                x = layer(x)
+            if self.up_scale > 1:
+                x = interpolate(x, scale_factor=self.up_scale, mode="bilinear", align_corners=False)
+            return x
+        return None
 
 @ROI_DIGIT_NECK_BRANCHES_REGISTRY.register()
 class KptsAttentionBranch(DigitNeckBranch):

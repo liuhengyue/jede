@@ -77,6 +77,8 @@ class BasePGROIHeads(BaseROIHeads):
     @classmethod
     def from_config(cls, cfg, input_shape):
         ret = super().from_config(cfg, input_shape)
+        # we use our FastRCNNOutputLayers since we have mixed dataset
+        ret.update({"box_predictor": FastRCNNOutputLayers(cfg, ret["box_head"].output_shape)})
         ret.update(cls._init_neck_base(cfg, input_shape))
         if ret["neck_base"] is None:
             neck_base_output_shape = None
@@ -86,6 +88,9 @@ class BasePGROIHeads(BaseROIHeads):
         if ret["neck_digit_output"] is None:
             digit_head_in_shape = None
         else:
+            digit_head_in_shape = input_shape
+        # modify if pretrain
+        if not cfg.MODEL.ROI_HEADS.ENABLE_POSE_GUIDE:
             digit_head_in_shape = input_shape
         ret.update(cls._init_digit_head(cfg, digit_head_in_shape))
         return ret
@@ -97,7 +102,7 @@ class BasePGROIHeads(BaseROIHeads):
         a cls head, bbox reg head and kpts head
         """
         ret = {}
-        if not cfg.MODEL.ROI_NECK_BASE.ON:
+        if not cfg.MODEL.ROI_NECK_BASE.ON or (not cfg.MODEL.ROI_HEADS.ENABLE_POSE_GUIDE):
             ret["neck_base"] = None
             return ret
         in_features = cfg.MODEL.ROI_HEADS.IN_FEATURES
@@ -302,11 +307,11 @@ class BasePGROIHeads(BaseROIHeads):
             losses = {}
             if self.digit_neck_on:  # do not use digit prediction
                 # shape (N, 3, 56, 56) (N, 2, 56, 56)
-                center_heatmaps, scale_heatmaps, offset_heatmaps = self.neck_digit_output(fused_features)
-                loss, _ = self.neck_digit_output.loss(instances, center_heatmaps, scale_heatmaps, offset_heatmaps)
+                outputs = self.neck_digit_output(fused_features)
+                loss, _ = self.neck_digit_output.loss(instances, outputs)
                 losses.update(loss)
                 with torch.no_grad():
-                    detections = self.neck_digit_output.decode(instances, center_heatmaps, scale_heatmaps, offset_heatmaps)
+                    detections = self.neck_digit_output.decode(instances, outputs)
                     # assign new fields to instances
                     self.label_and_sample_digit_proposals(detections, instances)
 
@@ -325,8 +330,8 @@ class BasePGROIHeads(BaseROIHeads):
         else:
             if self.digit_neck_on:  # do not use digit prediction
                 # shape (N, 3, 56, 56) (N, 2, 56, 56)
-                center_heatmaps, scale_heatmaps, offset_heatmaps = self.neck_digit_output(fused_features)
-                instances = self.neck_digit_output.inference(instances, center_heatmaps, scale_heatmaps, offset_heatmaps)
+                outputs = self.neck_digit_output(fused_features)
+                instances = self.neck_digit_output.inference(instances, outputs)
             if self.number_neck_on:
                 center_heatmaps, scale_heatmaps, offset_heatmaps = self.neck_number_output(fused_features)
                 instances = self.neck_number_output.inference(instances, center_heatmaps, scale_heatmaps, offset_heatmaps)

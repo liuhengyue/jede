@@ -7,20 +7,16 @@ from fvcore.nn import giou_loss, smooth_l1_loss
 import torch
 from torch import nn
 from torch.nn import functional as F
-import torch.distributed as dist
-from detectron2.utils import comm
-from detectron2.config import configurable
-from detectron2.layers import Conv2d, ConvTranspose2d, Linear, ShapeSpec, get_norm, ModulatedDeformConv
+
 from detectron2.layers.wrappers import _NewEmptyTensorOp
 from detectron2.utils.registry import Registry
-from detectron2.modeling.backbone.resnet import DeformBottleneckBlock
-from detectron2.modeling.roi_heads import build_box_head
-from pgrcnn.modeling.digit_head import DigitOutputLayers
 from detectron2.config import configurable
 from detectron2.layers import Linear, ShapeSpec, batched_nms, cat, cross_entropy, nonzero_tuple
 from detectron2.modeling.box_regression import Box2BoxTransform
-from detectron2.utils.events import get_event_storage
+from detectron2.data import DatasetCatalog, MetadataCatalog
+
 from pgrcnn.structures import Boxes, Players
+from pgrcnn.modeling.utils import beam_search_decode
 
 ROI_JERSEY_NUMBER_DET_REGISTRY = Registry("ROI_JERSEY_NUMBER_DET")
 
@@ -225,6 +221,7 @@ class NumDigitClassification(nn.Module):
             nn.Linear(128, 128),
             nn.Linear(128, self.out_channels)
         )
+
         for m in self.linears.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=0.01)
@@ -253,6 +250,7 @@ class JerseyNumberOutputLayers(nn.Module):
             *,
             box2box_transform,
             num_classes: int,
+            char_names: List[str],
             test_score_thresh: float = 0.0,
             test_nms_thresh: float = 0.5,
             test_topk_per_image: int = 100,
@@ -287,7 +285,7 @@ class JerseyNumberOutputLayers(nn.Module):
         if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)
         self.num_classes = num_classes
-
+        self.char_names = char_names
         self.cls_score = cls_predictor
         num_bbox_reg_classes = 1 if cls_agnostic_bbox_reg else num_classes
         box_dim = len(box2box_transform.weights)
@@ -321,11 +319,13 @@ class JerseyNumberOutputLayers(nn.Module):
     def from_config(cls, cfg, input_shape):
         number_box_head_channel = cfg.MODEL.ROI_NUMBER_BOX_HEAD.FC_DIM if cfg.MODEL.ROI_NUMBER_BOX_HEAD.NUM_FC else 0
         box2box_transform = Box2BoxTransform(weights=cfg.MODEL.ROI_BOX_HEAD.BBOX_REG_WEIGHTS) if number_box_head_channel else None
+        char_names = MetadataCatalog.get(cfg.DATASETS.TRAIN[0]).get("char_names")
         return {
             "input_shape": input_shape,
             "box2box_transform": box2box_transform,
             # fmt: off
             "num_classes": cfg.MODEL.ROI_DIGIT_BOX_HEAD.NUM_DIGIT_CLASSES, # this is the number of digits
+            "char_names": char_names,
             "cls_agnostic_bbox_reg": cfg.MODEL.ROI_NUMBER_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
             "smooth_l1_beta": cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA,
             "test_score_thresh": cfg.MODEL.ROI_NUMBER_BOX_HEAD.SCORE_THRESH_TEST,
@@ -335,7 +335,7 @@ class JerseyNumberOutputLayers(nn.Module):
             "loss_weight": 1.0,
             "cls_predictor": SequenceModel(cfg, input_shape), # box feature shape
             "max_length": cfg.MODEL.ROI_NUMBER_BOX_HEAD.SEQ_MAX_LENGTH,
-            "number_box_head_channel": number_box_head_channel # if use box reg
+            "number_box_head_channel": number_box_head_channel, # if use box reg
 
             # fmt: on
         }
@@ -516,6 +516,7 @@ class JerseyNumberOutputLayers(nn.Module):
         if self.enable_box_reg:
             self.predict_boxes(predictions, proposals)
             self.predict_probs(predictions, proposals)
+            # self.predict_probs_beam_search(predictions, proposals)
         else:
             self.predict_probs_without_box(predictions, proposals)
         # todo: possibly add nms
@@ -577,6 +578,42 @@ class JerseyNumberOutputLayers(nn.Module):
                 enumerate(zip(num_proposals_all, preds_index, confidence_scores)):
             labels_per_ins = self.ctc_decode(preds_index_per_image)
             labels_per_ins = torch.split(labels_per_ins, num_proposals_per_image)
+            scores_per_ins = torch.split(scores_per_image, num_proposals_per_image)
+            proposals[i].pred_number_classes = list(labels_per_ins)
+            proposals[i].pred_number_scores = list(scores_per_ins)
+
+        return proposals
+
+    def predict_probs_beam_search(
+            self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Players]
+    ):
+        """
+        Returns:
+            list[Tensor]: A list of Tensors of predicted class probabilities for each image.
+                Element i has shape (Ri, K + 1), where Ri is the number of predicted objects
+                for image i.
+        """
+        # (N, T, C)
+        scores, _ = predictions
+        scores = F.softmax(scores, dim=2)
+        preds_index, confidence_scores = [], []
+        for score in scores:
+            pred_index, pred_score = beam_search_decode(score, self.char_names)
+            preds_index.append(pred_index)
+            confidence_scores.append(pred_score)
+        preds_index = torch.stack(preds_index)
+        confidence_scores = torch.cat(confidence_scores)
+        # select max probability (greedy decoding) then decode index to character
+        # preds_prob = F.softmax(scores, dim=2)
+        # preds_max_prob, preds_index = preds_prob.max(dim=2)
+        # confidence_scores = preds_max_prob.cumprod(dim=1)[:, -1]
+        num_proposals_all = [[len(b) for b in p.pred_number_boxes] for p in proposals]
+        num_proposals = [sum(p) for p in num_proposals_all]
+        preds_index = torch.split(preds_index, num_proposals)
+        confidence_scores = torch.split(confidence_scores, num_proposals)
+        for i, (num_proposals_per_image, preds_index_per_image, scores_per_image) in \
+                enumerate(zip(num_proposals_all, preds_index, confidence_scores)):
+            labels_per_ins = torch.split(preds_index_per_image, num_proposals_per_image)
             scores_per_ins = torch.split(scores_per_image, num_proposals_per_image)
             proposals[i].pred_number_classes = list(labels_per_ins)
             proposals[i].pred_number_scores = list(scores_per_ins)

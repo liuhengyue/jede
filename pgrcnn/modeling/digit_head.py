@@ -72,7 +72,9 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="pg_rcnn"):
         storage.put_scalar(f"{prefix}/digit_fg_cls_accuracy", fg_num_accurate / num_fg)
         storage.put_scalar(f"{prefix}/digit_false_negative", num_false_negative / num_fg)
 
-def fast_rcnn_inference(boxes, scores, num_digits_scores, num_instances, image_shapes, score_thresh, nms_thresh, topk_per_image):
+def fast_rcnn_inference(boxes, scores, pred_digit_center_classes,
+                        pred_digit_center_scores,
+                        num_digits_scores, num_instances, image_shapes, score_thresh, nms_thresh, topk_per_image):
     """
     Call `fast_rcnn_inference_single_image` for all images.
 
@@ -102,16 +104,22 @@ def fast_rcnn_inference(boxes, scores, num_digits_scores, num_instances, image_s
     """
     result_per_image = [
         fast_rcnn_inference_single_image(
-            boxes_per_image, scores_per_image, num_digits_scores_per_image, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image
+            boxes_per_image, scores_per_image,
+            pred_digit_center_classes_per_image, pred_digit_center_scores_per_image,
+            num_digits_scores_per_image, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image
         )
-        for scores_per_image, boxes_per_image, num_digits_scores_per_image, num_instance, image_shape in \
-        zip(scores, boxes, num_digits_scores, num_instances, image_shapes)
+        for boxes_per_image, scores_per_image, pred_digit_center_classes_per_image,
+            pred_digit_center_scores_per_image, num_digits_scores_per_image, num_instance, image_shape in \
+        zip(boxes, scores, pred_digit_center_classes, pred_digit_center_scores,
+            num_digits_scores, num_instances, image_shapes)
     ]
     return [x[0] for x in result_per_image], [x[1] for x in result_per_image]
 
 
 def fast_rcnn_inference_single_image(
-    boxes, scores, num_digits_scores, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
+        boxes, scores,
+        pred_digit_center_classes, pred_digit_center_scores,
+        pred_num_digits, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
     per_class_nms=True, number_score_thresh=0.1
 ):
     """
@@ -129,10 +137,20 @@ def fast_rcnn_inference_single_image(
     N = len(num_instance) # the number of detected players
     valid_mask = torch.isfinite(boxes).all(dim=1) & torch.isfinite(scores).all(dim=1)
     if not valid_mask.all():
-        boxes = boxes[valid_mask]
-        scores = scores[valid_mask]
+        raise Exception("not all boxes/scores are valid.")
+        # boxes = boxes[valid_mask]
+        # scores = scores[valid_mask]
     # bg id is 0, so we get the last 10 classes
     scores = scores[:, 1:]
+    if pred_digit_center_classes is not None:
+        if len(pred_digit_center_classes) == 0:
+            pred_digit_center_classes = torch.as_tensor(pred_digit_center_classes, dtype=torch.long, device=scores.device)
+            pred_digit_center_scores = torch.as_tensor(pred_digit_center_scores, dtype=torch.double,
+                                                        device=scores.device)
+        else:
+            pred_digit_center_classes = torch.cat(pred_digit_center_classes)
+            pred_digit_center_scores = torch.cat(pred_digit_center_scores)
+        scores = scores * pred_digit_center_scores.unsqueeze(1)
     num_bbox_reg_classes = boxes.shape[1] // 4
     # Convert to Boxes to use the `clip` function ...
     boxes = Boxes(boxes.reshape(-1, 4))
@@ -153,18 +171,34 @@ def fast_rcnn_inference_single_image(
     else:
         boxes = boxes[filter_mask]
     scores = scores[filter_mask]
-    instance_idx = instance_idx[filter_inds[:, 0]]
+    pred_digit_center_classes = pred_digit_center_classes[filter_inds[:, 0]]
+    instance_idx = instance_idx[filter_inds[:, 0]] # the mask will maintain the instance_idx sorted from 0 to 1
     # Apply per-class NMS
-    cls_ids = filter_inds[:, 1]
+    cls_ids = filter_inds[:, 1] + 1
+    # get the jersey number detection first before nms
+    if pred_num_digits is not None:
+        pred_number_boxes, pred_number_classes, pred_number_scores = jersey_number_inference2(boxes, scores, cls_ids, pred_digit_center_classes, instance_idx, N, pred_num_digits)
     nms_method = nms_per_image # nms_per_player nms_per_image
-    boxes, scores, cls_ids = nms_method(boxes, scores, cls_ids, instance_idx, N, nms_thresh, topk_per_image, per_class_nms)
+    boxes, scores, cls_ids, pred_digit_center_classes, instance_idx = \
+        nms_method(boxes, scores, cls_ids, pred_digit_center_classes, instance_idx, N, nms_thresh, topk_per_image, per_class_nms)
 
+    # count number of digit object for each instance
+    counts = torch.bincount(instance_idx, minlength=N).tolist()
+    boxes = torch.split(boxes, counts)
+    boxes = [Boxes(x) for x in boxes]
+    scores = list(torch.split(scores, counts))
+    cls_ids = list(torch.split(cls_ids, counts))
+    # pred_digit_center_classes = list(torch.split(pred_digit_center_classes, counts))
     # boxes, scores, cls_ids, number_preds, number_scores = jersey_number_inference(boxes, scores, cls_ids, number_score_thresh)
     # assign fields for players
     result = Players(image_shape)
     result.pred_digit_boxes = boxes
     result.digit_scores = scores
     result.pred_digit_classes = cls_ids
+    if pred_num_digits is not None:
+        result.pred_number_boxes = pred_number_boxes
+        result.pred_number_classes = pred_number_classes
+        result.pred_number_scores = pred_number_scores
     # result.proposal_number_boxes = [b[s > number_score_thresh].union()
     #                                 for b, s in zip(boxes, scores)]
 
@@ -172,24 +206,75 @@ def fast_rcnn_inference_single_image(
 
     return result, filter_inds[:, 0]
 
-def nms_per_image(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image, per_class_nms=True):
+def jersey_number_inference2(boxes, scores, cls_ids, pred_digit_center_classes, instance_inds, num_instances, pred_num_digits, number_score_thresh=0.1, max_length=2):
+    counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
+    boxes = torch.split(boxes, counts)
+    boxes = [Boxes(x) for x in boxes]
+    scores = list(torch.split(scores, counts))
+    cls_ids = list(torch.split(cls_ids, counts))
+    pred_digit_center_classes = list(torch.split(pred_digit_center_classes, counts))
+    pred_number_classes = []
+    pred_number_scores = []
+    pred_number_boxes = []
+    for i in range(len(scores)):
+        box = boxes[i]
+        score = scores[i]
+        cls_id = cls_ids[i]
+        pred_digit_center_cls = pred_digit_center_classes[i]
+        pred_num_digits_per_ins = pred_num_digits[i]
+        if pred_num_digits_per_ins == 0:
+            pred_number_boxes.append(Boxes([]).to(pred_num_digits.device))
+            pred_number_classes.append(torch.zeros((1, max_length), dtype=torch.long, device=pred_num_digits.device))
+            pred_number_scores.append(torch.ones((1,), dtype=torch.double, device=score.device))
+       # single-digit case
+        elif pred_num_digits_per_ins == 1:
+            valid = pred_digit_center_cls == 0
+            box = box[valid]
+            score = score[valid]
+            cls_id = cls_id[valid]
+            jersey_number = cls_id.view(-1, 1)
+            jersey_number = F.pad(jersey_number, (0, 2))
+            pred_number_boxes.append(box)
+            pred_number_classes.append(jersey_number)
+            pred_number_scores.append(score)
+        elif pred_num_digits_per_ins == 2:
+            first_valid = pred_digit_center_cls == 0
+            second_valid = pred_digit_center_cls == 1
+            first_digit_boxes = box[first_valid].tensor
+            second_digit_boxes = box[second_valid].tensor
+            first_digit_classes = cls_id[first_valid]
+            second_digit_classes = cls_id[second_valid]
+            first_digit_scores = score[first_valid]
+            second_digit_scores = score[second_valid]
+            num_first, num_second = first_digit_classes.numel(), second_digit_classes.numel()
+            first_digit_boxes = first_digit_boxes.repeat(num_second, 1)
+            second_digit_boxes = second_digit_boxes.repeat_interleave(num_first, 0)
+            digit_boxes = torch.stack((first_digit_boxes, second_digit_boxes), dim=1)
+            number_boxes = Boxes.cat([Boxes(b).union() for b in digit_boxes])
+            first_digit_classes = first_digit_classes.repeat(num_second)
+            second_digit_classes = second_digit_classes.repeat_interleave(num_first)
+            jersey_number = torch.stack((first_digit_classes, second_digit_classes), dim=1)
+            jersey_number = F.pad(jersey_number, (0, 1))
+            number_score = first_digit_scores.repeat(num_second) * second_digit_scores.repeat_interleave(num_first)
+            pred_number_classes.append(jersey_number)
+            pred_number_scores.append(number_score)
+            pred_number_boxes.append(number_boxes)
+    return pred_number_boxes, pred_number_classes, pred_number_scores
+
+def nms_per_image(boxes, scores, cls_ids, pred_digit_center_classes, instance_inds, num_instances, nms_thresh, topk_per_image, per_class_nms=True):
     # proxy class ids
     proxy_cls_ids = cls_ids if per_class_nms else torch.zeros_like(cls_ids)
     keep = batched_nms(boxes, scores, proxy_cls_ids, nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
     # recover digit class ids by adding one
-    boxes, scores, cls_ids = boxes[keep], scores[keep], cls_ids[keep] + 1
+    boxes, scores, cls_ids = boxes[keep], scores[keep], cls_ids[keep]
+    pred_digit_center_classes = pred_digit_center_classes[keep]
     instance_inds = instance_inds[keep]
     instance_inds, sorted_inds = torch.sort(instance_inds)
     boxes, scores, cls_ids = boxes[sorted_inds], scores[sorted_inds], cls_ids[sorted_inds]
-    # count number of digit object for each instance
-    counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
-    boxes = torch.split(boxes, counts)
-    boxes = [Boxes(x) for x in boxes]
-    scores = list(torch.split(scores, counts))
-    cls_ids = list(torch.split(cls_ids, counts))
-    return boxes, scores, cls_ids
+    pred_digit_center_classes = pred_digit_center_classes[sorted_inds]
+    return boxes, scores, cls_ids, pred_digit_center_classes, instance_inds
 
 def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thresh, topk_per_image, per_class_nms=True):
     topk_per_instance = topk_per_image // num_instances
@@ -207,8 +292,7 @@ def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thr
     for i, (keep, box, score, cls_id) in enumerate(zip(keeps, boxes, scores, cls_ids)):
         boxes[i] = box[keep]
         scores[i] = score[keep]
-        # recover digit class ids by adding one
-        cls_ids[i] = cls_id[keep] + 1
+        cls_ids[i] = cls_id[keep]
     boxes = [Boxes(x) for x in boxes]
     return boxes, scores, cls_ids
 
@@ -342,14 +426,15 @@ class DigitOutputLayers(nn.Module):
         """
         scores, proposal_deltas = predictions
 
+        # todo: forgot why we need this
         # we split and assign to each proposal
-        num_proposal_digit_boxes = [[len(instance) for instance in p.proposal_digit_boxes] for p in proposals]
-        scores_all = torch.split(scores, [sum(num_per_image) for num_per_image in num_proposal_digit_boxes])
-        for proposals_per_image, scores_per_image, num_proposal_digit_boxes_per_image in zip(proposals,
-                                                                                            scores_all,
-                                                                                            num_proposal_digit_boxes):
-            proposal_scores_per_image = torch.split(scores_per_image, num_proposal_digit_boxes_per_image)
-            proposals_per_image.proposal_digit_box_scores = list(proposal_scores_per_image)
+        # num_proposal_digit_boxes = [[len(instance) for instance in p.proposal_digit_boxes] for p in proposals]
+        # scores_all = torch.split(scores, [sum(num_per_image) for num_per_image in num_proposal_digit_boxes])
+        # for proposals_per_image, scores_per_image, num_proposal_digit_boxes_per_image in zip(proposals,
+        #                                                                                     scores_all,
+        #                                                                                     num_proposal_digit_boxes):
+        #     proposal_scores_per_image = torch.split(scores_per_image, num_proposal_digit_boxes_per_image)
+        #     proposals_per_image.proposal_digit_box_scores = list(proposal_scores_per_image)
         # parse box regression outputs
         if len(proposals) and any([p.has("proposal_digit_boxes") for p in proposals]):
             proposal_boxes = cat([Boxes.cat(p.proposal_digit_boxes).tensor.to(proposal_deltas.device)
@@ -450,11 +535,16 @@ class DigitOutputLayers(nn.Module):
         scores = self.predict_probs(predictions, proposals)
         image_shapes = [x.image_size for x in proposals]
         num_instances = [[len(p_digit_boxes) for p_digit_boxes in p.get("proposal_digit_boxes")] for p in proposals]
-        num_digits_scores = [p.get("pred_num_digits_scores") if p.has("pred_num_digits_scores") else None for p in proposals]
+        pred_num_digits = [p.get("pred_num_digits") if p.has("pred_num_digits") else None for p in proposals]
+        pred_digit_center_classes = [p.get("pred_digit_center_classes") if p.has("pred_digit_center_classes") else None for p in proposals]
+        pred_digit_center_scores = [p.get("pred_digit_center_scores") if p.has("pred_digit_center_scores") else None
+                                     for p in proposals]
         detections, kept_idx = fast_rcnn_inference(
             boxes,
             scores,
-            num_digits_scores,
+            pred_digit_center_classes,
+            pred_digit_center_scores,
+            pred_num_digits,
             num_instances,
             image_shapes,
             self.test_score_thresh,

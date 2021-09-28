@@ -1,9 +1,9 @@
 import torch
 from torch.nn import functional as F
 
-from detectron2.layers import cat
+from detectron2.layers import cat, cross_entropy
 from .utils import compute_targets, compute_number_targets
-
+from detectron2.utils.comm import all_gather
 
 def gaussian_focal_loss(pred, gaussian_target, alpha=2.0, gamma=4.0, eps=1e-12):
     """`Focal Loss <https://arxiv.org/abs/1708.02002>`_ for targets in gaussian
@@ -79,6 +79,7 @@ def pg_rcnn_loss(
         pred_keypoint_logits,
         pred_scale_logits,
         pred_offset_logits,
+        num_digits_logits,
         instances,
         normalizer=None,
         output_head_weights=(1,0, 1.0, 1.0),
@@ -107,12 +108,14 @@ def pg_rcnn_loss(
     """
     has_offset_reg = pred_offset_logits is not None
     has_size_reg = pred_scale_logits is not None
+    has_num_digits_logits = num_digits_logits is not None
     heatmaps = []
     valid = []
     scale_targets = []
     offset_targets =[]
+
     # keypoint_side_len = pred_keypoint_logits.shape[2]
-    for instances_per_image in instances:
+    for img_idx, instances_per_image in enumerate(instances):
         heatmaps_per_image, scales_per_image, offsets_per_image, valid_per_image = \
             compute_targets(instances_per_image, pred_keypoint_logits.shape[1:],
                             offset_reg=has_offset_reg,
@@ -120,6 +123,9 @@ def pg_rcnn_loss(
                             size_target_scale=size_target_scale,
                             target_name=target_name)
         heatmaps.append(heatmaps_per_image)
+        if img_idx > 0:
+            # add a shift based on the total number of instances of previous image, since the predictions are concatenated
+            valid_per_image[:, 0] += len(instances[img_idx - 1])
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
         offset_targets.append(offsets_per_image)
@@ -138,6 +144,8 @@ def pg_rcnn_loss(
                 loss.update({target_name + '_constraint_loss': pred_scale_logits.sum() * 0})
         if has_offset_reg:
             loss.update({target_name + "_os_loss": pred_offset_logits.sum() * 0})
+        if has_num_digits_logits:
+            loss.update({"num_digits_cls_loss": num_digits_logits.sum() * 0})
         return loss, keypoint_targets
 
 
@@ -191,10 +199,10 @@ def pg_rcnn_loss(
         os_loss = output_head_weights[2] * F.smooth_l1_loss(pred_offset_logits, offset_targets, reduction='sum') / normalizer
         loss.update({target_name + "_os_loss": os_loss})
 
-    # if has_num_digits_logits:
-    #     gt_num_digits = torch.bincount(valid[:, 0], minlength=keypoint_targets.shape[0])
-    #     num_digit_cls_loss = cross_entropy(num_digits_logits, gt_num_digits)
-    #     loss.update({"num_digit_cls_loss": num_digit_cls_loss})
+    if has_num_digits_logits:
+        gt_num_digits = torch.bincount(valid[:, 0], minlength=keypoint_targets.shape[0])
+        num_digits_cls_loss = cross_entropy(num_digits_logits, gt_num_digits)
+        loss.update({"num_digits_cls_loss": num_digits_cls_loss})
 
     return loss, keypoint_targets
 

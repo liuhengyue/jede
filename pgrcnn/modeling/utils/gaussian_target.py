@@ -45,9 +45,10 @@ def compute_targets(
                torch.zeros((0, 2), dtype=torch.float, device=pred_keypoint_logits.device), \
                torch.empty((0, 2), dtype=torch.float, device=pred_keypoint_logits.device) if offset_reg else None, \
                torch.zeros((0, 3), dtype=torch.long, device=pred_keypoint_logits.device)
+    target_center_class_name = "gt_" + target_name + "_center_classes"
     keypoints = instances_per_image.get(target_center_name)
     scales = instances_per_image.get(target_scale_name)
-
+    center_classes = instances_per_image.get(target_center_class_name)
     # record the positive locations
     valid = []
     # gt scale targets
@@ -70,8 +71,8 @@ def compute_targets(
         raise NotImplementedError()
 
     # process per roi
-    for i, (kpts, scale, dx, dy, dw, dh, roi) in \
-            enumerate(zip(keypoints, scales, offset_x, offset_y, scale_x, scale_y, rois)):
+    for i, (center_cls, kpts, scale, dx, dy, dw, dh, roi) in \
+            enumerate(zip(center_classes, keypoints, scales, offset_x, offset_y, scale_x, scale_y, rois)):
         x = kpts[..., 0]
         y = kpts[..., 1]
 
@@ -99,7 +100,7 @@ def compute_targets(
         radius = gaussian_radius(scale, min_overlap=min_overlap).int()
         radius = torch.maximum(torch.zeros_like(radius), radius)
         gen_gaussian_target(heatmaps[i],
-                            [x, y],
+                            [center_cls, y, x],
                             radius)
         # add the roi index for easy selection for scale regression
         valid.append(
@@ -216,7 +217,7 @@ def compute_number_targets(
         radius = gaussian_radius(scale, min_overlap=min_overlap).int()
         radius = torch.maximum(torch.zeros_like(radius), radius)
         gen_gaussian_target(heatmaps[i],
-                            [x, y],
+                            [y, x],
                             radius)
         # add the roi index for easy selection for scale regression
         valid.append(
@@ -297,7 +298,7 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
     Args:
         heatmap (Tensor): Input heatmap, the gaussian kernel will cover on
             it and maintain the max value.
-        center (list[int]): Coord of gaussian kernel's center.
+        center (list[int]): Coord of gaussian kernel's center. y x
         radius (Tensor): x-axis and y-axis Radius of gaussian kernel.
         k (int): Coefficient of gaussian kernel. Default: 1.
 
@@ -311,7 +312,7 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
     gaussian_kernels = gaussian2D(
         radius, sigma=diameter / 6)
 
-    x, y = center
+    c, y, x = center
 
     height, width = heatmap.shape[-2:]
 
@@ -319,7 +320,7 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
     top, bottom = torch.min(y, radius[:, 1]), torch.min(height - y, radius[:, 1] + 1)
 
     for i, gaussian_kernel in enumerate(gaussian_kernels):
-        masked_heatmap = heatmap[:,
+        masked_heatmap = heatmap[c[i],
                          y[i] - top[i]:y[i] + bottom[i],
                          x[i] - left[i]:x[i] + right[i]]
         masked_gaussian = gaussian_kernel[radius[i, 1] - top[i]:radius[i, 1] + bottom[i],
@@ -328,7 +329,7 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
         torch.max(
             masked_heatmap,
             masked_gaussian * k,
-            out=heatmap[:,
+            out=heatmap[c[i],
                          y[i] - top[i]:y[i] + bottom[i],
                          x[i] - left[i]:x[i] + right[i]])
 

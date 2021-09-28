@@ -1,5 +1,5 @@
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/baseline/test_0.yaml
-#python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_gn.yaml
+#python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/R101-FPN_test_0_gn.yaml
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_attn_gn.yaml
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_gn_randcrop.yaml
 #python train_net.py --num-gpus 2 --config-file configs/pg_rcnn/ablations/test_0_copypastemix.yaml

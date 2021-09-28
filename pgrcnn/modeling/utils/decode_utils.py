@@ -1,7 +1,9 @@
-from typing import Any, List, Tuple, Union
+from typing import Any, List, Tuple, Union, Optional
 
 import torch
 import torch.nn.functional as F
+import numpy as np
+from CTCDecoder.ctc_decoder import best_path, beam_search
 
 def get_local_maximum(heat, kernel=3):
     """Extract local maximum pixel with given kernal.
@@ -66,7 +68,7 @@ def get_topk_random_from_heatmap(scores, k=20, ratio=1/4):
         - topk_xs (Tensor): X-coord of each topk keypoint.
     """
     num_topk = round(k * ratio)
-    num_rand = round(k * (1 - ratio))
+    num_rand = k - num_topk
     batch, _, height, width = scores.size()
     sorted_scores, sorted_inds = torch.sort(scores.view(batch, -1), descending=True)
     topk_scores = sorted_scores[:, :num_topk]
@@ -85,7 +87,7 @@ def get_topk_random_from_heatmap(scores, k=20, ratio=1/4):
     topk_xs = (topk_inds % width).int().float()
     return topk_scores, topk_inds, topk_clses, topk_ys, topk_xs
 
-def gather_feat(feat, ind, mask=None):
+def _gather_feat(feat, ind, mask=None):
     """Gather feature according to index.
 
     Args:
@@ -106,7 +108,7 @@ def gather_feat(feat, ind, mask=None):
     return feat
 
 
-def transpose_and_gather_feat(feat, ind):
+def _transpose_and_gather_feat(feat, ind):
     """Transpose and gather feature according to index.
 
     Args:
@@ -118,43 +120,9 @@ def transpose_and_gather_feat(feat, ind):
     """
     feat = feat.permute(0, 2, 3, 1).contiguous()
     feat = feat.view(feat.size(0), -1, feat.size(3))
-    feat = gather_feat(feat, ind)
-    return feat
-
-
-def _gather_feat(feat, ind, mask=None):
-    dim  = feat.size(2)
-    ind  = ind.unsqueeze(2).expand(ind.size(0), ind.size(1), dim)
-    feat = feat.gather(1, ind)
-    if mask is not None:
-        mask = mask.unsqueeze(2).expand_as(feat)
-        feat = feat[mask]
-        feat = feat.view(-1, dim)
-    return feat
-
-def _transpose_and_gather_feat(feat, ind):
-    feat = feat.permute(0, 2, 3, 1).contiguous()
-    feat = feat.view(feat.size(0), -1, feat.size(3))
     feat = _gather_feat(feat, ind)
     return feat
 
-def _topk(scores, K=40, largest=True):
-    batch, cat, height, width = scores.size()
-
-    topk_scores, topk_inds = torch.topk(scores.view(batch, cat, -1), K, largest=largest)
-
-    topk_inds = topk_inds % (height * width)
-    topk_ys = (topk_inds / width).int().float()
-    topk_xs = (topk_inds % width).int().float()
-
-    topk_score, topk_ind = torch.topk(topk_scores.view(batch, -1), K)
-    topk_clses = (topk_ind / K).int()
-    topk_inds = _gather_feat(
-        topk_inds.view(batch, -1, 1), topk_ind).view(batch, K)
-    topk_ys = _gather_feat(topk_ys.view(batch, -1, 1), topk_ind).view(batch, K)
-    topk_xs = _gather_feat(topk_xs.view(batch, -1, 1), topk_ind).view(batch, K)
-
-    return topk_score, topk_inds, topk_clses, topk_ys, topk_xs
 
 
 def ctdet_decode(heat, wh, reg, rois,
@@ -254,5 +222,29 @@ def ctdet_decode(heat, wh, reg, rois,
 
     return detections
 
+
+def beam_search_decode(scores: torch.Tensor, chars: str, max_length: int = 2):
+    """
+
+    Args:
+        scores: Tensor of TxC shape
+        chars: The whole set of chars for decoding
+
+    Returns: text: tensor of shape (max_length,)
+             score: tensor of shape (1,)
+
+    """
+    device = scores.device
+    scores = scores.detach().cpu().numpy()
+    # need to move the first class to the end
+    scores = np.roll(scores, -1, axis=1)
+    text, score = beam_search(scores, chars)
+    if len(text) > max_length:
+        text = text[:max_length]
+    pad = max_length - len(text)
+    text += [0] * pad
+    text = torch.as_tensor(text, dtype=torch.long, device=device)
+    score = torch.as_tensor([score], device=device)
+    return text, score
 
 

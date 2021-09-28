@@ -19,7 +19,12 @@ from pgrcnn.utils.launch_utils import setup
 from pgrcnn.structures import Players, Boxes
 
 
-def create_instances(predictions, image_size, p_conf_threshold=0, d_conf_threshold=0, digit_only=False):
+def create_instances(predictions,
+                     image_size,
+                     p_conf_threshold=0.5,
+                     d_conf_threshold=0.1,
+                     n_conf_threshold=0.1,
+                     digit_only=False):
     """
 
     Args:
@@ -53,14 +58,17 @@ def create_instances(predictions, image_size, p_conf_threshold=0, d_conf_thresho
     predictions = [predictions[person_inds[i-1]:person_inds[i]] for i in range(1, len(person_inds))]
     instances = []
     for pred in predictions:
-        single_instance = create_single_instance(pred, image_size)
+        single_instance = create_single_instance(pred, image_size, d_conf_threshold, n_conf_threshold)
         instances.append(single_instance)
     instances = Players.cat(instances)
     # filter low confident person detection
     instances = instances[instances.scores > p_conf_threshold]
     return instances
 
-def create_single_instance(predictions, image_size):
+def create_single_instance(predictions,
+                           image_size,
+                           d_conf_threshold=0.5,
+                           n_conf_threshold=0.5):
     """
 
     Args:
@@ -84,21 +92,23 @@ def create_single_instance(predictions, image_size):
     # process digit predictions
     digit_predictions = [p for p in predictions if "digit_bbox" in p['tasks']]
     boxes = np.asarray([p['bbox'] for p in digit_predictions]).reshape(-1, 4)
-    boxes = BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-    labels = np.asarray([p['category_id'] for p in digit_predictions])
-    scores = np.asarray([p['score'] for p in digit_predictions])
-    ret.digit_scores = [torch.as_tensor(scores)]
-    ret.pred_digit_boxes = [Boxes(boxes)]
-    ret.pred_digit_classes = [torch.as_tensor(labels)]
+    boxes = Boxes(BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS))
+    labels = torch.as_tensor([p['category_id'] for p in digit_predictions])
+    scores = torch.as_tensor([p['score'] for p in digit_predictions])
+    keep = scores > d_conf_threshold
+    ret.digit_scores = [scores[keep]]
+    ret.pred_digit_boxes = [boxes[keep]]
+    ret.pred_digit_classes = [labels[keep]]
     # process jersey number predictions
     number_predictions = [p for p in predictions if "jersey_number" in p['tasks']]
     boxes = np.asarray([p['bbox'] for p in number_predictions]).reshape(-1, 4)
-    boxes = BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-    labels = np.asarray([p['category_id'] for p in number_predictions])
-    scores = np.asarray([p['score'] for p in number_predictions])
-    ret.pred_number_boxes = [Boxes(boxes)]
-    ret.pred_number_classes = [torch.as_tensor(labels)]
-    ret.pred_number_scores = [torch.as_tensor(scores)]
+    boxes = Boxes(BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS))
+    labels = torch.as_tensor([p['category_id'] for p in number_predictions])
+    scores = torch.as_tensor([p['score'] for p in number_predictions])
+    keep = scores > n_conf_threshold
+    ret.pred_number_boxes = [boxes[keep]]
+    ret.pred_number_classes = [labels[keep]]
+    ret.pred_number_scores = [scores[keep]]
     return ret
 
 if __name__ == "__main__":

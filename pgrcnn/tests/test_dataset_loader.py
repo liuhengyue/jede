@@ -44,7 +44,7 @@ def test_base_dataloader(cfg, show_data=False):
 
     for data in dataloader:
         logger.info(f"{data[0]['file_name']}")
-        logger.info(f"{data[0]['instances']}")
+        logger.info(f"{data[0]}")
         if show_data:
             file_name, vis_img = visualize_training(data, cfg)
             cv2.imshow(file_name, vis_img)

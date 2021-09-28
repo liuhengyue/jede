@@ -50,7 +50,6 @@ def pad_full_keypoints(kpts, keypoints_inds=[5, 6, 12, 11], num_keypoints=17):
 def transform_instance_annotations(
         annotation, transforms, image_size, *,
         keypoint_hflip_indices=None,
-        num_interests=3,
         pad_to_full=True,
         keypoints_inds=[5, 6, 12, 11]
 ):
@@ -135,6 +134,7 @@ def transform_instance_annotations(
 
 def annotations_to_instances(annos,
                              image_size,
+                             num_interests=2,
                              digit_only=False,
                              seq_max_length=2
                              ):
@@ -203,7 +203,7 @@ def annotations_to_instances(annos,
         # if the person is filtered out, then its digit boxes should be fitlered out
         boxes = target.gt_digit_boxes = [Boxes(box) for box in boxes]
         classes = [obj["digit_ids"] for obj in annos]
-        classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
+        classes = [torch.tensor(c, dtype=torch.int64) for c in classes]
         for i, (box, label) in enumerate(zip(boxes, classes)):
             boxes[i].clip(image_size)
             keep = box.nonempty()
@@ -214,6 +214,10 @@ def annotations_to_instances(annos,
         # add centers and scales
         target.gt_digit_centers = [box.get_centers() for box in boxes]
         target.gt_digit_scales = [box.get_scales() for box in boxes]
+        if num_interests == 2:
+            target.gt_digit_center_classes = [torch.arange(c.numel()) for c in classes]
+        elif num_interests == 1:
+            target.gt_digit_center_classes = [torch.zeros(c.numel(), dtype=torch.long) for c in classes]
     if "number_bbox" in annos[0]:
         # we then add instance-level jersey number box and cls
         boxes = [BoxMode.convert(obj["number_bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
@@ -223,7 +227,7 @@ def annotations_to_instances(annos,
         # target.gt_number_classes = classes
         # create sequence with zero paddings
         classes = [obj["number_sequence"] for obj in annos]
-        classes = [torch.tensor(cls, dtype=torch.int64) for cls in classes]
+        classes = [torch.tensor(c, dtype=torch.int64) for c in classes]
         gt_lengths = torch.as_tensor([x.numel() for x in classes], dtype=torch.long)
         N = gt_lengths.numel()
         gt_seq = torch.zeros((N, seq_max_length), dtype=torch.long)

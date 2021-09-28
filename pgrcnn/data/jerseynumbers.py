@@ -16,12 +16,12 @@ from fvcore.common.file_io import PathManager, file_lock
 from detectron2.data import DatasetCatalog, MetadataCatalog
 logger = logging.getLogger(__name__)
 # fmt: off
-# CLASS_NAMES = [
-#     'person', '0', '1', '2', '3',
-#     '4', '5', '6', '7', '8', '9'
-# ]
+CHAR_NAMES = [
+     '0', '1', '2', '3',
+    '4', '5', '6', '7', '8', '9'
+]
 
-CLASS_NAMES = ['person'] + [str(i) for i in range(100)]
+CLASS_NAMES = ['person'] + CHAR_NAMES + [str(i) + str(j) for i in range(10) for j in range(10)]
 # follow the name in COCO, if only use 4 keypoints
 # KEYPOINT_NAMES = ["left_shoulder", "right_shoulder", "right_hip", "left_hip"]
 # KEYPOINT_CONNECTION_RULES = [
@@ -215,6 +215,7 @@ def register_jerseynumbers(cfg):
                                                       num_images=cfg.DATASETS.NUM_IMAGES))
         metadataCat = MetadataCatalog.get("jerseynumbers_" + name)
         metadataCat.set(thing_classes=CLASS_NAMES)
+        metadataCat.set(char_names=CHAR_NAMES)
         metadataCat.set(keypoint_names=KEYPOINT_NAMES)
         metadataCat.set(keypoint_connection_rules=KEYPOINT_CONNECTION_RULES)
         metadataCat.set(keypoint_flip_map=COCO_PERSON_KEYPOINT_FLIP_MAP) # no flip map will be used though

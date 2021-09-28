@@ -97,7 +97,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         ret.update(
             {
                 "digit_only": cfg.DATASETS.DIGIT_ONLY,
-                "num_interests": cfg.DATASETS.NUM_INTERESTS,
+                "num_interests": cfg.MODEL.ROI_DIGIT_NECK_OUTPUT.OUTPUT_HEAD_CHANNELS[0],
                 "pad_to_full": cfg.DATASETS.PAD_TO_FULL,
                 "keypoints_inds": cfg.DATASETS.KEYPOINTS_INDS,
                 # update augmentations
@@ -120,8 +120,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
 
     def apply_helper_annos(self, img, dataset_dict):
         # we randomly apply
-        if np.random.rand(1) > 0.5:
-            return img, dataset_dict
+        # if np.random.rand(1) > 0.5:
+        #     return img, dataset_dict
         img = img.copy()
         annos = dataset_dict["annotations"]
         for i, anno in enumerate(annos):
@@ -129,8 +129,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
             digit_ids = anno["digit_ids"]
             for j, (box, label) in enumerate(zip(digit_bboxes, digit_ids)):
                 # we could do for each digit
-                if np.random.rand(1) > 0.5:
-                    continue
+                # if np.random.rand(1) > 0.5:
+                #     continue
                 patch, helper_label = self.helper_dataset[np.random.randint(len(self.helper_dataset))]
                 box = [int(coord + 0.5) for coord in box]
                 x1, y1, x2, y2 = box
@@ -162,7 +162,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
         # USER: Write your own image loading if it's not from a file
         image = utils.read_image(dataset_dict["file_name"], format=self.image_format)
         utils.check_image_size(dataset_dict, image)
-        if self.swap_digit:
+        if self.swap_digit and self.is_train:
             image, dataset_dict = self.apply_helper_annos(image, dataset_dict)
         aug_input = T.AugInput(image, sem_seg=None)
         transforms = self.augmentations(aug_input)
@@ -192,7 +192,6 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 det_utils.transform_instance_annotations(
                     obj, transforms, image_shape,
                     keypoint_hflip_indices=self.keypoint_hflip_indices,
-                    num_interests=self.num_interests,
                     pad_to_full=self.pad_to_full,
                     keypoints_inds=self.keypoints_inds
                 )
@@ -200,7 +199,9 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                 if obj.get("iscrowd", 0) == 0
             ]
             instances = det_utils.annotations_to_instances(
-                annos, image_shape, digit_only=self.digit_only,
+                annos, image_shape,
+                num_interests=self.num_interests,
+                digit_only=self.digit_only,
                 seq_max_length=self.seq_max_length
             )
             dataset_dict["instances"] = instances
@@ -222,7 +223,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                                                  max_size=self.max_size_train,
                                                  augmentations=self.per_image_augmentations)
             image = dataset_dict["image"]
-            if self.swap_digit:
+            if self.swap_digit and self.is_train:
                 image, dataset_dict = self.apply_helper_annos(image, dataset_dict)
             aug_input = T.AugInput(image, sem_seg=None)
             transforms = self.augmentations(aug_input)
@@ -252,7 +253,6 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                     det_utils.transform_instance_annotations(
                         obj, transforms, image_shape,
                         keypoint_hflip_indices=self.keypoint_hflip_indices,
-                        num_interests=self.num_interests,
                         pad_to_full=self.pad_to_full,
                         keypoints_inds=self.keypoints_inds
                     )
@@ -260,7 +260,9 @@ class JerseyNumberDatasetMapper(DatasetMapper):
                     if obj.get("iscrowd", 0) == 0
                 ]
                 instances = det_utils.annotations_to_instances(
-                    annos, image_shape, digit_only=self.digit_only,
+                    annos, image_shape,
+                    num_interests=self.num_interests,
+                    digit_only=self.digit_only,
                     seq_max_length=self.seq_max_length
                 )
                 dataset_dict["instances"] = instances
