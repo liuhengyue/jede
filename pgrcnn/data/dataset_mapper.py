@@ -120,8 +120,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
 
     def apply_helper_annos(self, img, dataset_dict):
         # we randomly apply
-        # if np.random.rand(1) > 0.5:
-        #     return img, dataset_dict
+        if np.random.rand(1) > 0.5:
+            return img, dataset_dict
         img = img.copy()
         annos = dataset_dict["annotations"]
         for i, anno in enumerate(annos):
@@ -129,8 +129,8 @@ class JerseyNumberDatasetMapper(DatasetMapper):
             digit_ids = anno["digit_ids"]
             for j, (box, label) in enumerate(zip(digit_bboxes, digit_ids)):
                 # we could do for each digit
-                # if np.random.rand(1) > 0.5:
-                #     continue
+                if np.random.rand(1) > 0.5:
+                    continue
                 patch, helper_label = self.helper_dataset[np.random.randint(len(self.helper_dataset))]
                 box = [int(coord + 0.5) for coord in box]
                 x1, y1, x2, y2 = box

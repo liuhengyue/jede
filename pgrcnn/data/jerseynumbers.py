@@ -176,27 +176,73 @@ def get_union_box(digit_bboxes):
 
 
 def get_statistics(annotations):
+    img_ws, img_hs = [], []
+    area_digit_to_person_ratios = []
     h_digit_to_person_ratios = []
     w_digit_to_person_ratios = []
+    p_ws, p_hs, d_ws, d_hs = [], [], [], []
+    num_annotated_kpts = 0
     for anno_dict in annotations:
+        img_ws.append(anno_dict["width"])
+        img_hs.append(anno_dict["height"])
         annos = anno_dict["annotations"]
         for anno in annos:
+            num_annotated_kpts += len(anno["keypoints"]) > 0
             p_x1, p_y1, p_x2, p_y2 = anno["person_bbox"]
             p_w = p_x2 - p_x1
             p_h = p_y2 - p_y1
+            p_ws.append(p_w)
+            p_hs.append(p_h)
             for digit_bbox in anno["digit_bboxes"]:
                 d_x1, d_y1, d_x2, d_y2 = digit_bbox
                 d_w = d_x2 - d_x1
                 d_h = d_y2 - d_y1
+                d_ws.append(d_w)
+                d_hs.append(d_h)
                 w_digit_to_person_ratios.append(d_w / p_w)
                 h_digit_to_person_ratios.append(d_h / p_h)
+                area_digit_to_person_ratios.append((d_w * d_h) / (p_w * p_h))
     h_mean_ratio = np.mean(h_digit_to_person_ratios) if len(h_digit_to_person_ratios) else 0.
     w_mean_ratio = np.mean(w_digit_to_person_ratios) if len(w_digit_to_person_ratios) else 0.
     h_std_ratio = np.std(h_digit_to_person_ratios) if len(h_digit_to_person_ratios) else 0.
     w_std_ratio = np.std(w_digit_to_person_ratios) if len(w_digit_to_person_ratios) else 0.
-    logger.info("Mean / std height digit bbox / person bbox ratio: {} / {}".format(h_mean_ratio, h_std_ratio))
-    logger.info("Mean / std width digit bbox / person bbox ratio: {} / {}".format(w_mean_ratio, w_std_ratio))
-    # return h_mean_ratio, w_mean_ratio
+    p_w_mean = np.mean(p_ws) if len(p_ws) else 0.
+    p_w_std = np.std(p_ws) if len(p_ws) else 0.
+    p_h_mean = np.mean(p_hs) if len(p_hs) else 0.
+    p_h_std = np.std(p_hs) if len(p_hs) else 0.
+    d_w_mean = np.mean(d_ws) if len(d_ws) else 0.
+    d_w_std = np.std(d_ws) if len(d_ws) else 0.
+    d_h_mean = np.mean(d_hs) if len(d_hs) else 0.
+    d_h_std = np.std(d_hs) if len(d_hs) else 0.
+    area_mean = np.mean(area_digit_to_person_ratios) if len(area_digit_to_person_ratios) else 0.
+    area_std = np.std(area_digit_to_person_ratios) if len(area_digit_to_person_ratios) else 0.
+    img_w_mean = np.mean(img_ws) if len(img_ws) else 0.
+    img_w_std = np.std(img_ws) if len(img_ws) else 0.
+    img_h_mean = np.mean(img_hs) if len(img_hs) else 0.
+    img_h_std = np.std(img_hs) if len(img_hs) else 0.
+    # logger.info("Person box height: {}".format(str("{:.2f}".format(p_h_mean)) + "+-" + str("{:.2f}".format(p_h_std))))
+    # logger.info("Person box width: {}".format(str("{:.2f}".format(p_w_mean)) + "+-" + str("{:.2f}".format(p_w_std))))
+    # logger.info("Digit box height: {}".format(str("{:.2f}".format(d_h_mean)) + "+-" + str("{:.2f}".format(d_h_std))))
+    # logger.info("Digit box width: {}".format(str("{:.2f}".format(d_w_mean)) + "+-" + str("{:.2f}".format(d_w_std))))
+    # logger.info("Height digit / person bbox ratio: {}".format(str("{:.2f}".format(h_mean_ratio)) + "+-" + str("{:.2f}".format(h_std_ratio))))
+    # logger.info("Width digit / person bbox ratio: {}".format(str("{:.2f}".format(w_mean_ratio)) + "+-" + str("{:.2f}".format(w_std_ratio))))
+    # logger.info("Area digit / person bbox ratio: {}".format(str("{:.2f}".format(area_mean)) + "+-" + str("{:.2f}".format(area_std))))
+    # logger.info("Image width: {}".format(
+    #     str("{:.2f}".format(img_w_mean)) + "+-" + str("{:.2f}".format(img_w_std))))
+    # logger.info("Image height: {}".format(
+    #     str("{:.2f}".format(img_h_mean)) + "+-" + str("{:.2f}".format(img_h_std))))
+    # logger.info("Number of annotated keypoints: {}".format(num_annotated_kpts))
+
+    data = [len(annotations), num_annotated_kpts, img_w_mean, img_w_std, img_h_mean, img_h_std, p_w_mean, p_w_std,
+            p_h_mean, p_h_std, d_w_mean, d_w_std, d_h_mean, d_h_std, area_mean, area_std,
+            w_mean_ratio, w_std_ratio, h_mean_ratio, h_std_ratio]
+    data = ",".join(["%.2f" % d for d in data])
+    headers = "num_imgs, num_annotated_kpts, img_w_mean, img_w_std, img_h_mean, img_h_std, p_w_mean, p_w_std," \
+              "p_h_mean, p_h_std, d_w_mean, d_w_std, d_h_mean, d_h_std, area_mean, area_std, " \
+              "w_mean_ratio, w_std_ratio, h_mean_ratio, h_std_ratio"
+    logger.info(headers)
+    logger.info(data)
+
 
 
 def register_jerseynumbers(cfg):

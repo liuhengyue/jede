@@ -95,6 +95,7 @@ def compute_targets(
         # mark the positive targets
         y = y[valid_loc]
         x = x[valid_loc]
+        center_cls = center_cls[valid_loc]
         # digit box size in feature size (w, h)
         scale = scale[valid_loc] * torch.stack((dw, dh))[None, ...] # (N, 2)
         radius = gaussian_radius(scale, min_overlap=min_overlap).int()
@@ -336,7 +337,7 @@ def gen_gaussian_target(heatmap, center, radius, k=1):
     return heatmap
 
 
-def gaussian_radius(det_size, min_overlap=0.1):
+def gaussian_radius(det_size, min_overlap=0.3):
     r"""Generate 2D gaussian radius.
 
     Args:

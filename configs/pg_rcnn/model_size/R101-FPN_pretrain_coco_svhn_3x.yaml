@@ -18,7 +18,7 @@ INPUT:
     COPY_PASTE_MIX: 5
     RANDCOLOR: True
 DATALOADER:
-  SAMPLER_TRAIN: WeightedTrainingSampler
+    SAMPLER_TRAIN: WeightedTrainingSampler
 SOLVER:
   IMS_PER_BATCH: 8
   BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02

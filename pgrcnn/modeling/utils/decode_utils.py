@@ -138,7 +138,7 @@ def ctdet_decode(heat, wh, reg, rois,
     if batch == 0:
         return torch.zeros(0, 0, 6, device=heat.device)
 
-    # heat = torch.sigmoid(heat)
+    heat = torch.sigmoid(heat)
     # perform nms on heatmaps
     heat = get_local_maximum(heat)
     if training:

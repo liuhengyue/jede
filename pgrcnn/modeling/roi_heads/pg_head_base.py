@@ -106,6 +106,7 @@ class BasePGROIHeads(BaseROIHeads):
             ret["neck_base"] = None
             return ret
         in_features = cfg.MODEL.ROI_HEADS.IN_FEATURES
+        # default is 14x14
         pooler_resolution = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION
         in_channels = [input_shape[f].channels for f in in_features]
         # Check all channel counts are equal

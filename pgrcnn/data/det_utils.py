@@ -194,10 +194,14 @@ def annotations_to_instances(annos,
         target.gt_boxes = boxes[keep]
         keep_inds = keep.nonzero(as_tuple=True)[0]
         # better to just select the kept annos
+        # we change the annos, annos could be empty
         annos = [annos[keep_idx] for keep_idx in keep_inds]
         classes = [obj["category_id"] for obj in annos]
         classes = torch.tensor(classes, dtype=torch.int64)
         target.gt_classes = classes
+        # we have nothing
+        if not len(annos):
+            return target
     if "digit_bboxes" in annos[0]:
         boxes = [BoxMode.convert(obj["digit_bboxes"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
         # if the person is filtered out, then its digit boxes should be fitlered out

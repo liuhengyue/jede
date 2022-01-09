@@ -78,7 +78,6 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_BOX_HEAD.NAME = "DigitConvFCHead"
     _C.MODEL.ROI_DIGIT_BOX_HEAD.IOU_THRESHOLDS = [0.5]
     _C.MODEL.ROI_DIGIT_BOX_HEAD.NUM_DIGIT_CLASSES = 10
-    _C.MODEL.ROI_DIGIT_BOX_HEAD.BATCH_DIGIT_SIZE_PER_IMAGE = 256
     _C.MODEL.ROI_DIGIT_BOX_HEAD.NUM_FC = 2
     # Hidden layer dimension for FC layers in the RoI box head
     _C.MODEL.ROI_DIGIT_BOX_HEAD.FC_DIM = 1024
@@ -148,8 +147,9 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT = CN()
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.ON = True
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.NAME = "FCNNeckOutput"
-    _C.MODEL.ROI_DIGIT_NECK_OUTPUT.NUM_DIGITS_CLASSIFIER_ON = False
+    _C.MODEL.ROI_DIGIT_NECK_OUTPUT.NUM_DIGITS_CLASSIFIER_ON = 2 # 0 - not used, 1 - cascade, 2 - parallel, 3 - parallel as a head
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.OUTPUT_HEAD_NAMES = ("center", "size", "offset")
+    _C.MODEL.ROI_DIGIT_NECK_OUTPUT.CONVLSTM = False
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.OUTPUT_HEAD_CHANNELS = (1, 2, 2)
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.OUTPUT_HEAD_WEIGHTS = (1.0, 1.0, 1.0)
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.BBOX_REG_LOSS_TYPE = "smooth_l1"
@@ -165,6 +165,9 @@ def add_poseguide_config(cfg):
     # these two are the number of digit proposals per person roi
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.SIZE_TARGET_SCALE = "feature"
     _C.MODEL.ROI_DIGIT_NECK_OUTPUT.SIZE_TARGET_TYPE = "wh"
+    _C.MODEL.ROI_DIGIT_NECK_OUTPUT.ATTN = False
+    # change the size of the gaussian target
+    _C.MODEL.ROI_DIGIT_NECK_OUTPUT.MIN_OVERLAP = 0.3
 
     _C.MODEL.ROI_NUMBER_NECK = CN()
     _C.MODEL.ROI_NUMBER_NECK.NAME = "" # "NumberNeck"

@@ -126,7 +126,7 @@ class BaseROIHeads(StandardROIHeads):
     def from_config(cls, cfg, input_shape):
         ret = super().from_config(cfg, input_shape)
         ret.update({
-        "batch_digit_size_per_image": cfg.MODEL.ROI_DIGIT_BOX_HEAD.BATCH_DIGIT_SIZE_PER_IMAGE,
+        "batch_digit_size_per_image": cfg.MODEL.ROI_NECK_BASE.BATCH_DIGIT_SIZE_PER_IMAGE,
         # Matcher to assign box proposals to gt boxes
         "digit_proposal_matcher": Matcher(
             cfg.MODEL.ROI_DIGIT_BOX_HEAD.IOU_THRESHOLDS,

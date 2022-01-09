@@ -1,0 +1,26 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  RESNETS:
+    DEPTH: 18
+    RES2_OUT_CHANNELS: 64
+  ROI_HEADS:
+    NAME: PGROIHeads
+    PROPOSAL_APPEND_GT: True
+    ENABLE_POSE_GUIDE: True
+  ROI_NUMBER_BOX_HEAD:
+    NUM_CONV: 0
+    NUM_FC: 0
+    POOLER_RESOLUTION: (7, 7)
+  ROI_NUMBER_NECK:
+    NAME: ""
+  ROI_DIGIT_NECK_OUTPUT:
+    OUTPUT_HEAD_CHANNELS: (2, 2, 2)
+    NUM_DIGITS_CLASSIFIER_ON: 2
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+INPUT:
+  AUG:
+    HELPER_DATASET_NAME: svhn_train
+    COPY_PASTE_MIX: 5
+OUTPUT_DIR: ./output/pg_rcnn/model_size/R18-FPN_test_0_gn_copypastemix_swapdigit

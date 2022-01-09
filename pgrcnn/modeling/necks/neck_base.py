@@ -77,8 +77,13 @@ class NeckBase(nn.Module):
             assert person_box_features_shape == keypoint_heatmap_shape
             in_channels = keypoint_heatmap_shape.channels
         elif self.fusion_type == "multiply":
-            assert person_box_features_shape == keypoint_heatmap_shape
-            in_channels = keypoint_heatmap_shape.channels
+            assert (person_box_features_shape.channels == keypoint_heatmap_shape.channels) or \
+                   (keypoint_heatmap_shape.channels == 1)
+            assert person_box_features_shape.height == keypoint_heatmap_shape.height
+            assert person_box_features_shape.width == keypoint_heatmap_shape.width
+            in_channels = max(keypoint_heatmap_shape.channels, person_box_features_shape.channels)
+        elif self.fusion_type == "separate":
+            in_channels = person_box_features_shape.channels
         else: # only single branch
             if self.use_person_features and (not self.use_kpts_features):
                 assert person_box_features_shape.height == keypoint_heatmap_shape.height
@@ -147,6 +152,8 @@ class NeckBase(nn.Module):
             x = torch.add(kpts_features, person_features)
         elif self.fusion_type == "multiply":
             x = kpts_features * person_features
+        elif self.fusion_type == "separate":
+            return person_features, kpts_features
         else:
             x = kpts_features if self.use_kpts_features else person_features
         if self.attn_on:

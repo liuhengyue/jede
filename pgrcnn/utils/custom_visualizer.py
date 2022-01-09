@@ -177,7 +177,15 @@ class MontageImage:
         return rgb.astype("uint8")
 
 class JerseyNumberVisualizer(Visualizer):
-    def __init__(self, img_rgb, metadata=None, scale=2.0, instance_mode=ColorMode.IMAGE, montage=False, nrows=1, ncols=1):
+    def __init__(self,
+                 img_rgb,
+                 metadata=None,
+                 scale=2.0,
+                 instance_mode=ColorMode.IMAGE,
+                 digit_only=False,
+                 montage=False,
+                 nrows=1,
+                 ncols=1):
         """
         Args:
             img_rgb: a numpy array of shape (H, W, C), where H and W correspond to
@@ -188,6 +196,10 @@ class JerseyNumberVisualizer(Visualizer):
             metadata (Metadata): dataset metadata (e.g. class names and colors)
             instance_mode (ColorMode): defines one of the pre-defined style for drawing
                 instances on an image.
+            digit_only: if digit_only, draw as normal
+            montage: gt and pred side by side output
+            nrows: number of rows for montage
+            ncols: number of cols for montage
         """
         self.img = np.asarray(img_rgb).clip(0, 255).astype(np.uint8)
         if metadata is None:
@@ -205,6 +217,7 @@ class JerseyNumberVisualizer(Visualizer):
             np.sqrt(self.output.height * self.output.width) / (nrows * ncols) // 90, 10 // scale
         )
         self._instance_mode = instance_mode
+        self.digit_only = digit_only
 
 
     def gts_to_dict(self, data):
@@ -275,6 +288,8 @@ class JerseyNumberVisualizer(Visualizer):
         return self.output
 
     def draw_instance_predictions(self, instances):
+        if self.digit_only:
+            return super(JerseyNumberVisualizer, self).draw_instance_predictions(instances)
         predictions = self.predictions_to_list(instances)
         for p in predictions:
             self.draw_single_instance(p)

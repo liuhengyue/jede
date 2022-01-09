@@ -53,6 +53,7 @@ def test_base_dataloader(cfg, show_data=False):
 
 
 if __name__ == "__main__":
+    import sys
     args = default_argument_parser().parse_args()
     # lazy add config file if you want
     if not args.config_file:

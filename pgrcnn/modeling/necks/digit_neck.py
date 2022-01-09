@@ -20,42 +20,6 @@ from ..utils import ctdet_decode
 
 ROI_DIGIT_NECK_REGISTRY = Registry("ROI_DIGIT_NECK")
 
-class NumDigitsClassifier(nn.Module):
-    def __init__(self,
-                 cfg: detectron2.config.CfgNode,
-                 input_shapes: ShapeSpec
-                 ):
-        """
-
-        """
-        super().__init__()
-        pool_stride = 1
-        in_channels = \
-        input_shapes.channels *\
-        input_shapes.height // pool_stride * \
-        input_shapes.width // pool_stride
-        self.out_channels = 3  # 0 digit, 1 digit, 2 digit
-        # self.pool = Conv2d(self.c, self.c, 3, stride=self.pool_stride, padding=1,
-        #                     norm=None, activation=None)
-        self.pool = nn.MaxPool2d(kernel_size=3, stride=pool_stride, padding=1)
-        self.linears = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(in_channels, 128),
-            nn.Linear(128, 128),
-            nn.Linear(128, self.out_channels)
-        )
-        for m in self.linears.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, std=0.01)
-
-
-
-    def forward(self, x):
-        if x.numel() == 0:
-            return _NewEmptyTensorOp.apply(x, (0, self.out_channels))
-        x = self.pool(x)
-        x = self.linears(x)
-        return x
 
 @ROI_DIGIT_NECK_REGISTRY.register()
 class DigitNeck(nn.Module):
@@ -95,22 +59,28 @@ class DigitNeck(nn.Module):
         self.num_proposal_train = cfg.MODEL.ROI_NECK_BASE.NUM_PROPOSAL_TRAIN
         self.num_proposal_test = cfg.MODEL.ROI_NECK_BASE.NUM_PROPOSAL_TEST
         self.target_name = "digit"
-        self.num_digits_classifier_on = cfg.MODEL.ROI_DIGIT_NECK_OUTPUT.NUM_DIGITS_CLASSIFIER_ON
-        if self.num_digits_classifier_on:
-            self.num_digits_cls = NumDigitsClassifier(cfg, ShapeSpec(channels=self.neck_output.output_head_channels[0],
-                                                                     height=input_shape.height,
-                                                                     width=input_shape.width))
-        else:
-            self.num_digits_cls = None
+        # self.num_digits_classifier_on = cfg.MODEL.ROI_DIGIT_NECK_OUTPUT.NUM_DIGITS_CLASSIFIER_ON
+        # if self.num_digits_classifier_on:
+        #     self.num_digits_cls = NumDigitsClassifier(cfg, ShapeSpec(channels=self.neck_output.output_head_channels[0],
+        #                                                              height=input_shape.height,
+        #                                                              width=input_shape.width))
+        # else:
+        #     self.num_digits_cls = None
         self.add_box_constraints = cfg.MODEL.ROI_DIGIT_NECK_OUTPUT.ADD_BOX_CONSTRAINTS
+        self.min_overlap = cfg.MODEL.ROI_DIGIT_NECK_OUTPUT.MIN_OVERLAP
 
 
     def forward(self, x):
-        pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps = self.neck_output(x)
-        if self.num_digits_classifier_on:
-            num_digits_logits = self.num_digits_cls(pred_center_heatmaps)
+        if isinstance(x, tuple):
+            x, attn_maps = x
+            pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps, num_digits_logits = self.neck_output(x)
+            pred_center_heatmaps = pred_center_heatmaps * attn_maps
         else:
-            num_digits_logits = None
+            pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps, num_digits_logits = self.neck_output(x)
+        # if self.num_digits_classifier_on:
+        #     num_digits_logits = self.num_digits_cls(pred_center_heatmaps)
+        # else:
+        #     num_digits_logits = None
         return (pred_center_heatmaps, pred_scale_heatmaps, pred_offset_heatmaps, num_digits_logits)
 
     def decode(self, instances, outputs):
@@ -177,7 +147,8 @@ class DigitNeck(nn.Module):
                             size_target_scale=self.size_target_scale,
                             output_head_weights=self.out_head_weights,
                             target_name=self.target_name,
-                            add_box_constraints=self.add_box_constraints)
+                            add_box_constraints=self.add_box_constraints,
+                            min_overlap=self.min_overlap)
 
 
 

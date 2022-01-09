@@ -224,6 +224,7 @@ def build_detection_test_loader(cfg, dataset_name, mapper=None):
     dataset = DatasetFromList(dataset_dicts)
     if mapper is None:
         mapper = JerseyNumberDatasetMapper(cfg, False)
+    # here we use default dataset mapper
     dataset = MapDataset(dataset, mapper)
 
     sampler = InferenceSampler(len(dataset))
@@ -341,7 +342,8 @@ def get_detection_dataset_dicts(
             has_jerseynumber = 'digit_bboxes' in dataset_dicts[i][0]['annotations'][0]
             for j, dataset_dict in enumerate(dataset_dicts[i]):
                 data_id = start_ind + j
-                applicables[data_id] = (has_jerseynumber, i)
+                # video 4 (basketball should not be used for copypastemix)
+                applicables[data_id] = (has_jerseynumber and dataset_dict['video_id']!= 4, i)
                 weights.append( 1 / (len(dataset_dicts) * len(dataset_dicts[i])) )
                 if has_jerseynumber:
                     jerseynumber_inds[i].append(data_id)

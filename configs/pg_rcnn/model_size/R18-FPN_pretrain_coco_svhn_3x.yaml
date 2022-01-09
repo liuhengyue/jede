@@ -1,0 +1,34 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  BACKBONE:
+    FREEZE_AT: 0
+  RESNETS:
+    DEPTH: 18
+    RES2_OUT_CHANNELS: 64
+    NORM: "SyncBN"
+  RPN:
+    PRE_NMS_TOPK_TRAIN: 128  # Per FPN level
+    POST_NMS_TOPK_TRAIN: 64
+  ROI_HEADS:
+    PROPOSAL_APPEND_GT: False
+    ENABLE_POSE_GUIDE: False
+  ROI_DIGIT_BOX_HEAD:
+    POOLER_RESOLUTION: 14
+DATASETS:
+  TRAIN: ("svhn_train", "keypoints_coco_2017_train")
+INPUT:
+  CROP:
+    ENABLED: True
+    SIZE: [ 0.7, 1.0 ]
+#  MAX_SIZE_TEST: 320
+  AUG:
+    COPY_PASTE_MIX: 5
+    RANDCOLOR: True
+DATALOADER:
+    SAMPLER_TRAIN: WeightedTrainingSampler
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
+  STEPS: (60000,)
+  MAX_ITER: 75000
+OUTPUT_DIR: ./output/pg_rcnn/model_size/R18-FPN_pretrain_coco_svhn_3x

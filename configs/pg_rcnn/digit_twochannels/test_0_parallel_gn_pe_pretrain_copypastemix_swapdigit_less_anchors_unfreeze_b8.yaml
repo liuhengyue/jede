@@ -1,0 +1,44 @@
+_BASE_: "../pg_rcnn_base.yaml"
+MODEL:
+  BACKBONE:
+    FREEZE_AT: 0
+  RESNETS:
+    NORM: "SyncBN"
+  WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
+  ANCHOR_GENERATOR:
+    SIZES: [ [ 64 ], [ 128 ], [ 256 ], [ 512 ] ]
+  RPN:
+    IN_FEATURES: [ "p3", "p4", "p5", "p6" ]
+  FPN:
+    IN_FEATURES: [ "res2", "res3", "res4", "res5" ]
+  ROI_HEADS:
+    NAME: PGROIHeads
+    PROPOSAL_APPEND_GT: True
+    ENABLE_POSE_GUIDE: True
+  ROI_NUMBER_BOX_HEAD:
+    NUM_CONV: 0
+    NUM_FC: 0
+    POOLER_RESOLUTION: (7, 7)
+  ROI_NUMBER_NECK:
+    NAME: ""
+  ROI_NECK_BASE_BRANCHES:
+    KEYPOINTS_BRANCH:
+      PE: True
+  ROI_DIGIT_NECK_OUTPUT:
+    OUTPUT_HEAD_CHANNELS: (2, 2, 2)
+    NUM_DIGITS_CLASSIFIER_ON: 2
+DATASETS:
+  TRAIN_VIDEO_IDS: [1,2,3]
+  TEST_VIDEO_IDS: [0]
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.0008
+  STEPS: (10000,)
+  MAX_ITER: 12500
+  WARMUP_FACTOR: 0.004
+  WARMUP_ITERS: 250
+INPUT:
+  AUG:
+    HELPER_DATASET_NAME: svhn_train
+    COPY_PASTE_MIX: 5
+OUTPUT_DIR: ./output/pg_rcnn/digit_twochannels/test_0_parallel_gn_pe_pretrain_copypastemix_swapdigit_less_anchors_unfreeze_b8

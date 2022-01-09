@@ -673,6 +673,10 @@ def instances_to_coco_json(instances, img_id, digit_only=True, thing_classes=Non
             results.append(result)
         return results
 
+    has_digit_prediction = instances.has("pred_digit_boxes")
+    # add jersey number recognitions
+    has_jersey_number_box_pred = instances.has("pred_number_boxes")
+    has_jersey_number_cls_pred = instances.has("pred_number_classes")
     # person instances
     has_keypoints = instances.has("pred_keypoints")
     for k in range(num_instance):
@@ -698,88 +702,77 @@ def instances_to_coco_json(instances, img_id, digit_only=True, thing_classes=Non
             result["keypoints"] = keypoints.flatten().tolist()
         results.append(result)
 
-    # convert digit related fields
-    has_digit_prediction = instances.has("pred_digit_boxes")
-    if has_digit_prediction:
-        digit_boxes = [digit_boxes.tensor.numpy() for digit_boxes in instances.pred_digit_boxes]
-        num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
-        # digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
-        if len(digit_boxes) > 0:
-            digit_boxes = np.concatenate(digit_boxes)
-            digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
-            digit_boxes = digit_boxes.tolist()
-            digit_scores = [score for digit_scores in instances.digit_scores if len(digit_scores) > 0 \
-                            for score in digit_scores.tolist()]
-            digit_classes = [cls for digit_classes in instances.pred_digit_classes if len(digit_classes) > 0 \
-                             for cls in digit_classes.tolist()]
-        else:
-            digit_scores, digit_classes = [], []
+        # convert digit related fields
+        if has_digit_prediction:
+            digit_boxes = instances.pred_digit_boxes[k].tensor.numpy()
+            # num_digit_boxes_per_instance = [digit_box.shape[0] for digit_box in digit_boxes]
+            # digit_box_instance_inds = [i for i, num_digit_boxes in enumerate(num_digit_boxes_per_instance) for _ in range(num_digit_boxes)]
+            if len(digit_boxes) > 0:
+                digit_boxes = BoxMode.convert(digit_boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
+                digit_boxes = digit_boxes.tolist()
+                digit_scores = instances.digit_scores[k].tolist()
+                digit_classes = instances.pred_digit_classes[k].tolist()
+            else:
+                digit_scores, digit_classes = [], []
 
-        num_digit_instance = len(digit_boxes)
+            for i in range(len(digit_boxes)):
+                result = {
+                    "image_id": img_id,
+                    "category_id": digit_classes[i],
+                    "bbox": digit_boxes[i],
+                    "score": digit_scores[i],
+                    "tasks": ["digit_bbox"]
+                }
+                results.append(result)
 
-        for k in range(num_digit_instance):
-            result = {
-                "image_id": img_id,
-                "category_id": digit_classes[k],
-                "bbox": digit_boxes[k],
-                "score": digit_scores[k],
-                "tasks": ["digit_bbox"]
-            }
-            results.append(result)
-
-            result = {
-                "image_id": img_id,
-                "category_id": 0,
-                "bbox": digit_boxes[k],
-                "score": digit_scores[k],
-                "tasks": ["digit_bbox_class_agnostic"]
-            }
-                # add a field for matching the digit to its person
-                # result["match_id"] = digit_box_instance_inds[k-num_person_instance]
-            results.append(result)
-
-    # add jersey number recognitions
-    has_jersey_number_box_pred = instances.has("pred_number_boxes")
-    has_jersey_number_cls_pred = instances.has("pred_number_classes")
-    if has_jersey_number_box_pred and has_jersey_number_cls_pred:
-        jersey_boxes = [BoxMode.convert(number_boxes.tensor.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist() for
-                        number_boxes in instances.pred_number_boxes]
-        jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_number_classes] \
-            if instances.has("pred_number_classes") else [[] for _ in range(num_instance)]
-        jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_number_scores] \
-            if instances.has("pred_number_scores") else [[] for _ in range(num_instance)]
-        for j_ns, j_ss, j_bs in zip(jersey_numbers, jersey_scores, jersey_boxes):
-            for j_n, j_s, j_b in zip(j_ns, j_ss, j_bs):
-                number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
-                if number_id in thing_classes: # we may get weird number
-                    number_id = thing_classes.index(number_id)
-                    result = {
-                        "image_id": img_id,
-                        "category_id": number_id,
-                        "bbox": j_b,
-                        "score": j_s,
-                        "tasks" : ["jersey_number"]
-                    }
-                    results.append(result)
                 result = {
                     "image_id": img_id,
                     "category_id": 0,
-                    "bbox": j_b,
-                    "score": j_s,
-                    "tasks": ["jersey_number_box"]
+                    "bbox": digit_boxes[i],
+                    "score": digit_scores[i],
+                    "tasks": ["digit_bbox_class_agnostic"]
                 }
+                    # add a field for matching the digit to its person
+                    # result["match_id"] = digit_box_instance_inds[k-num_person_instance]
                 results.append(result)
-    # per-instance classification
-    if (not has_jersey_number_box_pred) and has_jersey_number_cls_pred:
-        jersey_boxes = torch.split(instances.pred_boxes.tensor, len(instances))
-        jersey_boxes = [BoxMode.convert(number_boxes.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist() for
-                        number_boxes in jersey_boxes]
-        jersey_numbers = [det_numbers.tolist() for det_numbers in instances.pred_number_classes] \
-            if instances.has("pred_number_classes") else [[] for _ in range(num_instance)]
-        jersey_scores = [det_number_scores.tolist() for det_number_scores in instances.pred_number_scores] \
-            if instances.has("pred_number_scores") else [[] for _ in range(num_instance)]
-        for j_ns, j_ss, j_bs in zip(jersey_numbers, jersey_scores, jersey_boxes):
-            for j_n, j_s, j_b in zip(j_ns, j_ss, j_bs):
+
+
+        if has_jersey_number_box_pred and has_jersey_number_cls_pred:
+            # add empty box to results
+            jersey_boxes = BoxMode.convert(instances.pred_number_boxes[k].tensor.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist()
+            jersey_numbers = instances.pred_number_classes[k].tolist()
+            jersey_scores = instances.pred_number_scores[k].tolist()
+            if len(jersey_boxes):
+                for j_n, j_s, j_b in zip(jersey_numbers, jersey_scores, jersey_boxes):
+                    number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
+                    if number_id in thing_classes: # we may get weird number
+                        number_id = thing_classes.index(number_id)
+                        result = {
+                            "image_id": img_id,
+                            "category_id": number_id,
+                            "bbox": j_b,
+                            "score": j_s,
+                            "tasks" : ["jersey_number"]
+                        }
+                        results.append(result)
+                    result = {
+                        "image_id": img_id,
+                        "category_id": 0,
+                        "bbox": j_b,
+                        "score": j_s,
+                        "tasks": ["jersey_number_box"]
+                    }
+                    results.append(result)
+        # per-instance classification, we can do it as long as we have has_jersey_number_cls_pred
+        # if (not has_jersey_number_box_pred) and has_jersey_number_cls_pred:
+        if has_jersey_number_cls_pred:
+            # use the player bbox as the pred box
+            jersey_boxes = BoxMode.convert(instances.pred_boxes[k].tensor.numpy(), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).tolist()
+            if not len(jersey_boxes):
+                jersey_boxes = [jersey_boxes]
+            jersey_numbers = instances.pred_number_classes[k].tolist()
+            jersey_scores = instances.pred_number_scores[k].tolist()
+            for j_n, j_s, j_b in zip(jersey_numbers, jersey_scores, jersey_boxes):
                 number_id = ''.join([thing_classes[digit] for digit in j_n if digit > 0]) # remove padding
                 number_id = thing_classes.index(number_id) if number_id in thing_classes else -1
                 result = {

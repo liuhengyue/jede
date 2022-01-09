@@ -6,37 +6,42 @@ MODEL:
     ENABLE_POSE_GUIDE: True
   ROI_NECK_BASE:
     PE: False
+    FUSION_TYPE: "cat"
   ROI_NECK_BASE_BRANCHES:
+    PERSON_BRANCH:
+      UP_SCALE: 2
+      DECONV_KERNEL: 4
     KEYPOINTS_BRANCH:
-      PE: False
-  ROI_NUMBER_BOX_HEAD:
-    NUM_CONV: 0
-    NUM_FC: 2
-    POOLER_RESOLUTION: (7, 7)
-  ROI_NUMBER_NECK:
-#    NAME: "NumberNeck"
-    NAME: None
+      UP_SCALE: 2
+      DECONV_KERNEL: 4
+#      NAME: "KptsROIBranch"
+#      UP_SCALE: 2
+#      PE: False
   ROI_DIGIT_NECK_OUTPUT:
+#    CONVLSTM: True
+    OUTPUT_HEAD_NAMES: ("center", "size", "offset")
     OUTPUT_HEAD_CHANNELS: (2, 2, 2)
-    NUM_DIGITS_CLASSIFIER_ON: True
+    NUM_DIGITS_CLASSIFIER_ON: 3
+    ATTN: True
+    MIN_OVERLAP: 0.1
   ROI_DIGIT_NECK:
     NAME: DigitNeck
 #    NAME: None
 
 DATASETS:
   TRAIN: ("jerseynumbers_train", ) # ("svhn_train", "keypoints_coco_2017_val_100") # jerseynumbers_train
-  NUM_IMAGES: 1 # change the number of images to load
-  TRAIN_VIDEO_IDS: [1,2,3]
-  TEST_VIDEO_IDS: [1]
-INPUT:
+  NUM_IMAGES: -1 # change the number of images to load
+  TRAIN_VIDEO_IDS: [0,1,2,3,4]
+  TEST_VIDEO_IDS: [3]
+#INPUT:
 #  MIN_SIZE_TRAIN: (256,)
 #  MAX_SIZE_TRAIN: 320
 #  MAX_SIZE_TEST: 320
-  AUG:
+#  AUG:
 #    COPY_PASTE_MIX: 5
-    HELPER_DATASET_NAME: svhn_train
+#    HELPER_DATASET_NAME: svhn_train
 SOLVER:
-  IMS_PER_BATCH: 2
+  IMS_PER_BATCH: 1
   BASE_LR: 0.001 # when IMS_PER_BATCH = 16, LR is 0.02
   STEPS: (1500, )
   MAX_ITER: 2000
@@ -45,7 +50,7 @@ SOLVER:
   CHECKPOINT_PERIOD: 500
 DATALOADER:
   SHUFFLE: False
-  NUM_WORKERS: 2
-  SAMPLER_TRAIN: "WeightedTrainingSampler"
+  NUM_WORKERS: 0
+#  SAMPLER_TRAIN: "WeightedTrainingSampler"
 
 OUTPUT_DIR: ./output/pg_rcnn/tests/baseline

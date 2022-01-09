@@ -17,7 +17,7 @@ def gaussian_focal_loss(pred, gaussian_target, alpha=2.0, gamma=4.0, eps=1e-12):
         gamma (float, optional): The gamma for calculating the modulating
             factor. Defaults to 4.0.
     """
-    # pred = torch.sigmoid(pred)
+    pred = torch.sigmoid(pred)
     pos_weights = gaussian_target.eq(1)
     neg_weights = (1 - gaussian_target).pow(gamma)
     pos_loss = (-(pred + eps).log() * (1 - pred).pow(alpha) * pos_weights).sum()
@@ -86,7 +86,8 @@ def pg_rcnn_loss(
         size_target_type="ltrb",
         size_target_scale="feature",
         target_name="digit",
-        add_box_constraints=False
+        add_box_constraints=False,
+        min_overlap=0.3
         ):
     """
     Wrap center and size loss here.
@@ -121,11 +122,11 @@ def pg_rcnn_loss(
                             offset_reg=has_offset_reg,
                             size_target_type=size_target_type,
                             size_target_scale=size_target_scale,
+                            min_overlap=min_overlap,
                             target_name=target_name)
         heatmaps.append(heatmaps_per_image)
-        if img_idx > 0:
-            # add a shift based on the total number of instances of previous image, since the predictions are concatenated
-            valid_per_image[:, 0] += len(instances[img_idx - 1])
+        # add a shift based on the total number of instances of previous image, since the predictions are concatenated
+        valid_per_image[:, 0] += sum([len(instances[j]) for j in range(img_idx)])
         valid.append(valid_per_image)
         scale_targets.append(scales_per_image)
         offset_targets.append(offsets_per_image)
