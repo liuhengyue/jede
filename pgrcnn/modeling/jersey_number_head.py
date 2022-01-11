@@ -16,7 +16,6 @@ from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.data import DatasetCatalog, MetadataCatalog
 
 from pgrcnn.structures import Boxes, Players
-from pgrcnn.modeling.utils import beam_search_decode
 
 ROI_JERSEY_NUMBER_DET_REGISTRY = Registry("ROI_JERSEY_NUMBER_DET")
 
@@ -584,41 +583,41 @@ class JerseyNumberOutputLayers(nn.Module):
 
         return proposals
 
-    def predict_probs_beam_search(
-            self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Players]
-    ):
-        """
-        Returns:
-            list[Tensor]: A list of Tensors of predicted class probabilities for each image.
-                Element i has shape (Ri, K + 1), where Ri is the number of predicted objects
-                for image i.
-        """
-        # (N, T, C)
-        scores, _ = predictions
-        scores = F.softmax(scores, dim=2)
-        preds_index, confidence_scores = [], []
-        for score in scores:
-            pred_index, pred_score = beam_search_decode(score, self.char_names)
-            preds_index.append(pred_index)
-            confidence_scores.append(pred_score)
-        preds_index = torch.stack(preds_index)
-        confidence_scores = torch.cat(confidence_scores)
-        # select max probability (greedy decoding) then decode index to character
-        # preds_prob = F.softmax(scores, dim=2)
-        # preds_max_prob, preds_index = preds_prob.max(dim=2)
-        # confidence_scores = preds_max_prob.cumprod(dim=1)[:, -1]
-        num_proposals_all = [[len(b) for b in p.pred_number_boxes] for p in proposals]
-        num_proposals = [sum(p) for p in num_proposals_all]
-        preds_index = torch.split(preds_index, num_proposals)
-        confidence_scores = torch.split(confidence_scores, num_proposals)
-        for i, (num_proposals_per_image, preds_index_per_image, scores_per_image) in \
-                enumerate(zip(num_proposals_all, preds_index, confidence_scores)):
-            labels_per_ins = torch.split(preds_index_per_image, num_proposals_per_image)
-            scores_per_ins = torch.split(scores_per_image, num_proposals_per_image)
-            proposals[i].pred_number_classes = list(labels_per_ins)
-            proposals[i].pred_number_scores = list(scores_per_ins)
-
-        return proposals
+    # def predict_probs_beam_search(
+    #         self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Players]
+    # ):
+    #     """
+    #     Returns:
+    #         list[Tensor]: A list of Tensors of predicted class probabilities for each image.
+    #             Element i has shape (Ri, K + 1), where Ri is the number of predicted objects
+    #             for image i.
+    #     """
+    #     # (N, T, C)
+    #     scores, _ = predictions
+    #     scores = F.softmax(scores, dim=2)
+    #     preds_index, confidence_scores = [], []
+    #     for score in scores:
+    #         pred_index, pred_score = beam_search_decode(score, self.char_names)
+    #         preds_index.append(pred_index)
+    #         confidence_scores.append(pred_score)
+    #     preds_index = torch.stack(preds_index)
+    #     confidence_scores = torch.cat(confidence_scores)
+    #     # select max probability (greedy decoding) then decode index to character
+    #     # preds_prob = F.softmax(scores, dim=2)
+    #     # preds_max_prob, preds_index = preds_prob.max(dim=2)
+    #     # confidence_scores = preds_max_prob.cumprod(dim=1)[:, -1]
+    #     num_proposals_all = [[len(b) for b in p.pred_number_boxes] for p in proposals]
+    #     num_proposals = [sum(p) for p in num_proposals_all]
+    #     preds_index = torch.split(preds_index, num_proposals)
+    #     confidence_scores = torch.split(confidence_scores, num_proposals)
+    #     for i, (num_proposals_per_image, preds_index_per_image, scores_per_image) in \
+    #             enumerate(zip(num_proposals_all, preds_index, confidence_scores)):
+    #         labels_per_ins = torch.split(preds_index_per_image, num_proposals_per_image)
+    #         scores_per_ins = torch.split(scores_per_image, num_proposals_per_image)
+    #         proposals[i].pred_number_classes = list(labels_per_ins)
+    #         proposals[i].pred_number_scores = list(scores_per_ins)
+    #
+    #     return proposals
 
     def predict_probs_without_box(
             self, predictions: Tuple[torch.Tensor, torch.Tensor], proposals: List[Players]

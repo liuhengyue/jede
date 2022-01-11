@@ -74,7 +74,9 @@ def _log_classification_stats(pred_logits, gt_classes, prefix="pg_rcnn"):
 
 def fast_rcnn_inference(boxes, scores, pred_digit_center_classes,
                         pred_digit_center_scores,
-                        num_digits_scores, num_instances, image_shapes, score_thresh, nms_thresh, topk_per_image):
+                        num_digits_scores, num_instances, image_shapes, digit_score_thresh,
+                        number_score_thresh, nms_thresh, topk_per_image
+                        ):
     """
     Call `fast_rcnn_inference_single_image` for all images.
 
@@ -106,7 +108,8 @@ def fast_rcnn_inference(boxes, scores, pred_digit_center_classes,
         fast_rcnn_inference_single_image(
             boxes_per_image, scores_per_image,
             pred_digit_center_classes_per_image, pred_digit_center_scores_per_image,
-            num_digits_scores_per_image, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image
+            num_digits_scores_per_image, num_instance, image_shape,
+            digit_score_thresh, number_score_thresh, nms_thresh, topk_per_image
         )
         for boxes_per_image, scores_per_image, pred_digit_center_classes_per_image,
             pred_digit_center_scores_per_image, num_digits_scores_per_image, num_instance, image_shape in \
@@ -119,8 +122,9 @@ def fast_rcnn_inference(boxes, scores, pred_digit_center_classes,
 def fast_rcnn_inference_single_image(
         boxes, scores,
         pred_digit_center_classes, pred_digit_center_scores,
-        pred_num_digits, num_instance, image_shape, score_thresh, nms_thresh, topk_per_image,
-    per_class_nms=True, number_score_thresh=0.1
+        pred_num_digits, num_instance, image_shape, digit_score_thresh,
+        number_score_thresh, nms_thresh, topk_per_image,
+    per_class_nms=True
 ):
     """
     Single-image inference. Return bounding-box detection results by thresholding
@@ -158,7 +162,7 @@ def fast_rcnn_inference_single_image(
     boxes = boxes.tensor.view(-1, num_bbox_reg_classes, 4)  # R x C x 4
 
     # Filter results based on detection scores
-    filter_mask = scores > score_thresh  # R x K
+    filter_mask = scores > digit_score_thresh  # R x K
     # R' x 2. First column contains indices of the R predictions;
     # Second column contains indices of classes in terms of 0 - 9 class id.
     filter_inds = filter_mask.nonzero()
@@ -177,7 +181,9 @@ def fast_rcnn_inference_single_image(
     cls_ids = filter_inds[:, 1] + 1
     # get the jersey number detection first before nms
     if pred_num_digits is not None:
-        pred_number_boxes, pred_number_classes, pred_number_scores = jersey_number_inference2(boxes, scores, cls_ids, pred_digit_center_classes, instance_idx, N, pred_num_digits)
+        pred_number_boxes, pred_number_classes, pred_number_scores = jersey_number_inference(boxes, scores, cls_ids,
+                                                                                             pred_digit_center_classes, instance_idx, N, pred_num_digits,
+                                                                                             number_score_thresh=number_score_thresh)
     nms_method = nms_per_image # nms_per_player nms_per_image
     boxes, scores, cls_ids, pred_digit_center_classes, instance_idx = \
         nms_method(boxes, scores, cls_ids, pred_digit_center_classes, instance_idx, N, nms_thresh, topk_per_image, per_class_nms)
@@ -206,7 +212,8 @@ def fast_rcnn_inference_single_image(
 
     return result, filter_inds[:, 0]
 
-def jersey_number_inference2(boxes, scores, cls_ids, pred_digit_center_classes, instance_inds, num_instances, pred_num_digits, number_score_thresh=0.1, max_length=2):
+def jersey_number_inference(boxes, scores, cls_ids, pred_digit_center_classes, instance_inds, num_instances, pred_num_digits,
+                            number_score_thresh, max_length=2):
     counts = torch.bincount(instance_inds, minlength=num_instances).tolist()
     boxes = torch.split(boxes, counts)
     boxes = [Boxes(x) for x in boxes]
@@ -224,16 +231,16 @@ def jersey_number_inference2(boxes, scores, cls_ids, pred_digit_center_classes, 
         pred_num_digits_per_ins = pred_num_digits[i]
         if pred_num_digits_per_ins == 0:
             pred_number_boxes.append(Boxes([]).to(pred_num_digits.device))
-            pred_number_classes.append(torch.zeros((1, max_length), dtype=torch.long, device=pred_num_digits.device))
-            pred_number_scores.append(torch.ones((1,), dtype=torch.double, device=score.device))
+            pred_number_classes.append(torch.zeros((0, max_length), dtype=torch.long, device=pred_num_digits.device))
+            pred_number_scores.append(torch.zeros((0,), dtype=torch.double, device=score.device))
        # single-digit case
         elif pred_num_digits_per_ins == 1:
-            valid = pred_digit_center_cls == 0
+            valid = torch.logical_and(pred_digit_center_cls == 0, score > number_score_thresh)
             box = box[valid]
             score = score[valid]
             cls_id = cls_id[valid]
             jersey_number = cls_id.view(-1, 1)
-            jersey_number = F.pad(jersey_number, (0, 2))
+            jersey_number = F.pad(jersey_number, (0, 1))
             pred_number_boxes.append(box)
             pred_number_classes.append(jersey_number)
             pred_number_scores.append(score)
@@ -254,11 +261,12 @@ def jersey_number_inference2(boxes, scores, cls_ids, pred_digit_center_classes, 
             first_digit_classes = first_digit_classes.repeat(num_second)
             second_digit_classes = second_digit_classes.repeat_interleave(num_first)
             jersey_number = torch.stack((first_digit_classes, second_digit_classes), dim=1)
-            jersey_number = F.pad(jersey_number, (0, 1))
+            # jersey_number = F.pad(jersey_number, (0, 1))
             number_score = first_digit_scores.repeat(num_second) * second_digit_scores.repeat_interleave(num_first)
-            pred_number_classes.append(jersey_number)
-            pred_number_scores.append(number_score)
-            pred_number_boxes.append(number_boxes)
+            keep = number_score > number_score_thresh
+            pred_number_classes.append(jersey_number[keep])
+            pred_number_scores.append(number_score[keep])
+            pred_number_boxes.append(number_boxes[keep])
     return pred_number_boxes, pred_number_classes, pred_number_scores
 
 def nms_per_image(boxes, scores, cls_ids, pred_digit_center_classes, instance_inds, num_instances, nms_thresh, topk_per_image, per_class_nms=True):
@@ -296,6 +304,8 @@ def nms_per_player(boxes, scores, cls_ids, instance_inds, num_instances, nms_thr
     boxes = [Boxes(x) for x in boxes]
     return boxes, scores, cls_ids
 
+""" Deprecated way to get number
+
 def jersey_number_inference(boxes, scores, cls_ids, number_score_thresh):
     xs = [x.get_centers()[:, 0] for x in boxes]
     # sort the digit box location left -> right
@@ -313,7 +323,7 @@ def jersey_number_inference(boxes, scores, cls_ids, number_score_thresh):
     number_preds = [pred[keep] for keep, pred in zip(keep_for_number, cls_ids)]
 
     return boxes, scores, cls_ids, number_preds, number_scores
-
+"""
 
 class DigitOutputLayers(nn.Module):
     """
@@ -329,7 +339,8 @@ class DigitOutputLayers(nn.Module):
             *,
             box2box_transform,
             num_classes: int,
-            test_score_thresh: float = 0.0,
+            test_digit_score_thresh: float = 0.0,
+            test_number_score_thresh: float = 0.0,
             test_nms_thresh: float = 0.5,
             test_topk_per_image: int = 100,
             cls_agnostic_bbox_reg: bool = False,
@@ -374,7 +385,8 @@ class DigitOutputLayers(nn.Module):
 
         self.box2box_transform = box2box_transform
         self.smooth_l1_beta = smooth_l1_beta
-        self.test_score_thresh = test_score_thresh
+        self.test_digit_score_thresh = test_digit_score_thresh
+        self.test_number_score_thresh = test_number_score_thresh
         self.test_nms_thresh = test_nms_thresh
         self.test_topk_per_image = test_topk_per_image
         self.box_reg_loss_type = box_reg_loss_type
@@ -393,7 +405,8 @@ class DigitOutputLayers(nn.Module):
             "num_classes": cfg.MODEL.ROI_DIGIT_BOX_HEAD.NUM_DIGIT_CLASSES, # this is the number of digits
             "cls_agnostic_bbox_reg": cfg.MODEL.ROI_DIGIT_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG,
             "smooth_l1_beta": cfg.MODEL.ROI_BOX_HEAD.SMOOTH_L1_BETA,
-            "test_score_thresh": cfg.MODEL.ROI_DIGIT_BOX_HEAD.SCORE_THRESH_TEST,
+            "test_digit_score_thresh": cfg.MODEL.ROI_DIGIT_BOX_HEAD.DIGIT_SCORE_THRESH_TEST,
+            "test_number_score_thresh": cfg.MODEL.ROI_DIGIT_BOX_HEAD.NUMBER_SCORE_THRESH_TEST,
             "test_nms_thresh": cfg.MODEL.ROI_DIGIT_BOX_HEAD.NMS_THRESH_TEST,
             "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
             "box_reg_loss_type": cfg.MODEL.ROI_DIGIT_BOX_HEAD.BBOX_REG_LOSS_TYPE,
@@ -547,7 +560,8 @@ class DigitOutputLayers(nn.Module):
             pred_num_digits,
             num_instances,
             image_shapes,
-            self.test_score_thresh,
+            self.test_digit_score_thresh,
+            self.test_number_score_thresh,
             self.test_nms_thresh,
             self.test_topk_per_image
         )

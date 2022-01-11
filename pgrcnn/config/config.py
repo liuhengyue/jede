@@ -91,7 +91,9 @@ def add_poseguide_config(cfg):
     _C.MODEL.ROI_DIGIT_BOX_HEAD.POOLER_RESOLUTION = 7
     # Whether to use class agnostic for bbox regression
     _C.MODEL.ROI_DIGIT_BOX_HEAD.CLS_AGNOSTIC_BBOX_REG = False
-    _C.MODEL.ROI_DIGIT_BOX_HEAD.SCORE_THRESH_TEST = 0.01
+    _C.MODEL.ROI_DIGIT_BOX_HEAD.DIGIT_SCORE_THRESH_TEST = 0.01
+    # when number comes from the digit head
+    _C.MODEL.ROI_DIGIT_BOX_HEAD.NUMBER_SCORE_THRESH_TEST = 0.01
     _C.MODEL.ROI_DIGIT_BOX_HEAD.NMS_THRESH_TEST = 0.5
     _C.MODEL.ROI_DIGIT_BOX_HEAD.BBOX_REG_LOSS_TYPE = "smooth_l1"
 

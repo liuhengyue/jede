@@ -257,7 +257,8 @@ class JerseyNumberVisualizer(Visualizer):
             "person_bbox": data.pred_boxes.tensor.numpy() if data.has('pred_boxes') else np.empty((0, 4)),
             "scores": data.scores.numpy() if data.has('scores') else np.empty((0,)),
             "category_id": data.pred_classes.numpy() if data.has('pred_classes') else np.empty((0,)),
-            "keypoints": data.pred_keypoints.tensor.numpy() if data.has('pred_keypoints') else np.empty((0, 17, 3)),
+            # pred keypoints is tensor not Keypoints()
+            "keypoints": data.pred_keypoints.numpy() if data.has('pred_keypoints') else np.empty((0, 17, 3)),
             "digit_bboxes": Boxes.cat(data.pred_digit_boxes).tensor.numpy() if data.has('pred_digit_boxes') else np.empty((0, 4)),
             "digit_ids": torch.cat(data.pred_digit_classes).numpy() if data.has('pred_digit_classes') else np.empty((0,)),
             "digit_scores": torch.cat(data.digit_scores).numpy() if data.has('digit_scores') else np.empty((0,)),

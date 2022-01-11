@@ -1,9 +1,5 @@
-from typing import Any, List, Tuple, Union, Optional
-
 import torch
 import torch.nn.functional as F
-import numpy as np
-from CTCDecoder.ctc_decoder import best_path, beam_search
 
 def get_local_maximum(heat, kernel=3):
     """Extract local maximum pixel with given kernal.
@@ -222,29 +218,5 @@ def ctdet_decode(heat, wh, reg, rois,
 
     return detections
 
-
-def beam_search_decode(scores: torch.Tensor, chars: str, max_length: int = 2):
-    """
-
-    Args:
-        scores: Tensor of TxC shape
-        chars: The whole set of chars for decoding
-
-    Returns: text: tensor of shape (max_length,)
-             score: tensor of shape (1,)
-
-    """
-    device = scores.device
-    scores = scores.detach().cpu().numpy()
-    # need to move the first class to the end
-    scores = np.roll(scores, -1, axis=1)
-    text, score = beam_search(scores, chars)
-    if len(text) > max_length:
-        text = text[:max_length]
-    pad = max_length - len(text)
-    text += [0] * pad
-    text = torch.as_tensor(text, dtype=torch.long, device=device)
-    score = torch.as_tensor([score], device=device)
-    return text, score
 
 

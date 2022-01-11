@@ -9,7 +9,8 @@ import torch
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
-from detectron2.utils.visualizer import ColorMode, Visualizer
+from detectron2.utils.visualizer import ColorMode
+from pgrcnn.utils.custom_visualizer import JerseyNumberVisualizer
 
 
 class VisualizationDemo(object):
@@ -26,6 +27,7 @@ class VisualizationDemo(object):
         )
         self.cpu_device = torch.device("cpu")
         self.instance_mode = instance_mode
+        self.digit_only = cfg.DATASETS.DIGIT_ONLY
 
         self.parallel = parallel
         if parallel:
@@ -48,7 +50,10 @@ class VisualizationDemo(object):
         predictions = self.predictor(image)
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
         image = image[:, :, ::-1]
-        visualizer = Visualizer(image, self.metadata, instance_mode=self.instance_mode)
+        visualizer = JerseyNumberVisualizer(image,
+                                            self.metadata,
+                                            instance_mode=self.instance_mode,
+                                            digit_only=self.digit_only)
         if "panoptic_seg" in predictions:
             panoptic_seg, segments_info = predictions["panoptic_seg"]
             vis_output = visualizer.draw_panoptic_seg_predictions(
@@ -59,9 +64,27 @@ class VisualizationDemo(object):
                 vis_output = visualizer.draw_sem_seg(
                     predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
                 )
+            # we are here
             if "instances" in predictions:
                 instances = predictions["instances"].to(self.cpu_device)
-                vis_output = visualizer.draw_instance_predictions(predictions=instances)
+                # convert jersey number here
+                thing_classes = self.metadata.get("thing_classes")
+                # remove padding amd get the number
+                pred_number_classes = [[''.join([thing_classes[i]
+                                        for i in n[n > 0].tolist()])
+                                        for n in x]
+                                       for x in instances.pred_number_classes]
+                pred_number_classes = [[thing_classes.index(n) if n in thing_classes else 0
+                                        for n in x]
+                                       for x in pred_number_classes]
+                # remove unreasonable numbers
+                number_thresh = 0.2
+                pred_number_classes = [torch.as_tensor(pred_num, dtype=torch.long) for pred_num in pred_number_classes]
+                mask = [torch.logical_and(x > 0, score > number_thresh) for x, score in zip(pred_number_classes, instances.pred_number_scores)]
+                instances.pred_number_classes = [x[m] for m, x in zip(mask, pred_number_classes)]
+                instances.pred_number_boxes = [x[m] for m, x in zip(mask, instances.pred_number_boxes)]
+                instances.pred_number_scores = [x[m] for m, x in zip(mask, instances.pred_number_scores)]
+                vis_output = visualizer.draw_instance_predictions(instances)
 
         return predictions, vis_output
 

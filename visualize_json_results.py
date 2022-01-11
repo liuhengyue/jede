@@ -93,7 +93,7 @@ def create_single_instance(predictions,
     ret.scores = scores
     ret.pred_boxes = Boxes(boxes)
     ret.pred_classes = labels
-    ret.pred_keypoints = Keypoints(keypoints)
+    ret.pred_keypoints = keypoints
     # process digit predictions
     digit_predictions = [p for p in predictions if "digit_bbox" in p['tasks']]
     boxes = np.asarray([p['bbox'] for p in digit_predictions]).reshape(-1, 4)

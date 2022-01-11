@@ -18,7 +18,7 @@ from .layers import *
 
 from .meta_arch import pgrcnn
 
-from .utils import ctdet_decode, beam_search_decode, compute_targets, compute_number_targets
+from .utils import ctdet_decode, compute_targets, compute_number_targets
 
 _EXCLUDE = {"ShapeSpec"}
 __all__ = [k for k in globals().keys() if k not in _EXCLUDE and not k.startswith("_")]

@@ -7,14 +7,16 @@ import time
 import cv2
 import tqdm
 
-from pgrcnn.config import get_cfg
+
 from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
-
 from predictor import VisualizationDemo
 
+from pgrcnn.config import get_cfg
+from pgrcnn.data.jerseynumbers import register_jerseynumbers
+
 # constants
-WINDOW_NAME = "COCO detections"
+WINDOW_NAME = "JEDE detections"
 
 
 def setup_cfg(args):
@@ -22,19 +24,19 @@ def setup_cfg(args):
     cfg = get_cfg()
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
-    # Set score_threshold for builtin models
-    cfg.MODEL.RETINANET.SCORE_THRESH_TEST = args.confidence_threshold
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.confidence_threshold
-    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = args.confidence_threshold
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.p_conf_threshold
+    cfg.MODEL.ROI_DIGIT_BOX_HEAD.DIGIT_SCORE_THRESH_TEST = args.d_conf_threshold
+    cfg.MODEL.ROI_DIGIT_BOX_HEAD.NUMBER_SCORE_THRESH_TEST = args.n_conf_threshold
     cfg.freeze()
+    register_jerseynumbers(cfg)
     return cfg
 
 
 def get_parser():
-    parser = argparse.ArgumentParser(description="Detectron2 demo for builtin models")
+    parser = argparse.ArgumentParser(description="JEDE demo")
     parser.add_argument(
         "--config-file",
-        default="detectron2/configs/quick_schedules/mask_rcnn_R_50_FPN_inference_acc_test.yaml",
+        default="configs/jede/best_model.yaml",
         metavar="FILE",
         help="path to config file",
     )
@@ -52,16 +54,14 @@ def get_parser():
         "If not given, will show output in an OpenCV window.",
     )
 
-    parser.add_argument(
-        "--confidence-threshold",
-        type=float,
-        default=0.5,
-        help="Minimum score for instance predictions to be shown",
-    )
+    parser.add_argument("--p-conf-threshold", default=0.9, type=float, help="person confidence threshold")
+    parser.add_argument("--d-conf-threshold", default=0.2, type=float, help="digit confidence threshold")
+    parser.add_argument("--n-conf-threshold", default=0.2, type=float, help="number confidence threshold")
+
     parser.add_argument(
         "--opts",
         help="Modify config options using the command-line 'KEY VALUE' pairs",
-        default=[],
+        default=["MODEL.WEIGHTS", "output/jede_best/test_0/model_final.pth"],
         nargs=argparse.REMAINDER,
     )
     return parser
