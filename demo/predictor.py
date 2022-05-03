@@ -52,6 +52,7 @@ class VisualizationDemo(object):
         image = image[:, :, ::-1]
         visualizer = JerseyNumberVisualizer(image,
                                             self.metadata,
+                                            scale=2.0,
                                             instance_mode=self.instance_mode,
                                             digit_only=self.digit_only)
         if "panoptic_seg" in predictions:

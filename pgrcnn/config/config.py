@@ -6,7 +6,7 @@ __all__ = ["get_cfg", "add_poseguide_config", "add_tridentnet_config"]
 def get_cfg() -> CN:
     """
     Get a copy of the default config.
-    Then add extra fields.
+    Then add modeling fields.
 
     We
 
@@ -201,6 +201,7 @@ def add_poseguide_config(cfg):
 
     _C.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH = CN()
     _C.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.NAME = "PersonROIBranch"
+    _C.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.POOLER_RESOLUTION = 14
     _C.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.UP_SCALE = 1
     _C.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.DECONV_KERNEL = 4
     _C.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.CONV_DIMS = [64, 64]

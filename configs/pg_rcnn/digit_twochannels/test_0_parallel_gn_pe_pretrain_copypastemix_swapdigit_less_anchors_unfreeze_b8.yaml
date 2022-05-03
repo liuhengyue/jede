@@ -1,9 +1,9 @@
 _BASE_: "../pg_rcnn_base.yaml"
 MODEL:
-  BACKBONE:
-    FREEZE_AT: 0
-  RESNETS:
-    NORM: "SyncBN"
+#  BACKBONE:
+#    FREEZE_AT: 0
+#  RESNETS:
+#    NORM: "SyncBN"
   WEIGHTS: "output/pg_rcnn/aug/datasets_mix/pretrain_coco_svhn_3x/model_final.pth"
   ANCHOR_GENERATOR:
     SIZES: [ [ 64 ], [ 128 ], [ 256 ], [ 512 ] ]
@@ -30,13 +30,20 @@ MODEL:
 DATASETS:
   TRAIN_VIDEO_IDS: [1,2,3]
   TEST_VIDEO_IDS: [0]
+#SOLVER:
+#  IMS_PER_BATCH: 8
+#  BASE_LR: 0.0008
+#  STEPS: (10000,)
+#  MAX_ITER: 12500
+#  WARMUP_FACTOR: 0.004
+#  WARMUP_ITERS: 250
 SOLVER:
-  IMS_PER_BATCH: 8
-  BASE_LR: 0.0008
-  STEPS: (10000,)
-  MAX_ITER: 12500
-  WARMUP_FACTOR: 0.004
-  WARMUP_ITERS: 250
+  IMS_PER_BATCH: 4
+  BASE_LR: 0.0004
+  STEPS: (20000,)
+  MAX_ITER: 25000
+  WARMUP_FACTOR: 0.002
+  WARMUP_ITERS: 500
 INPUT:
   AUG:
     HELPER_DATASET_NAME: svhn_train

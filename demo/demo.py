@@ -36,7 +36,7 @@ def get_parser():
     parser = argparse.ArgumentParser(description="JEDE demo")
     parser.add_argument(
         "--config-file",
-        default="configs/jede/best_model.yaml",
+        default="configs/jede/best.yaml",
         metavar="FILE",
         help="path to config file",
     )
@@ -61,7 +61,7 @@ def get_parser():
     parser.add_argument(
         "--opts",
         help="Modify config options using the command-line 'KEY VALUE' pairs",
-        default=["MODEL.WEIGHTS", "output/jede_best/test_0/model_final.pth"],
+        default=["MODEL.WEIGHTS", "output/jede_best/best/model_final.pth"],
         nargs=argparse.REMAINDER,
     )
     return parser
@@ -98,9 +98,10 @@ if __name__ == "__main__":
             )
 
             if args.output:
+                ext = ".pdf"
                 if os.path.isdir(args.output):
                     assert os.path.isdir(args.output), args.output
-                    out_filename = os.path.join(args.output, os.path.basename(path))
+                    out_filename = os.path.join(args.output, os.path.basename(path).split(".")[0] + ext)
                 else:
                     assert len(args.input) == 1, "Please specify a directory with args.output"
                     out_filename = args.output

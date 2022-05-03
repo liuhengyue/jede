@@ -120,7 +120,7 @@ class JerseyNumberDatasetMapper(DatasetMapper):
 
     def apply_helper_annos(self, img, dataset_dict):
         # we randomly apply
-        if np.random.rand(1) > 0.5:
+        if ('digit_bboxes' not in dataset_dict['annotations'][0]) or np.random.rand(1) > 0.5:
             return img, dataset_dict
         img = img.copy()
         annos = dataset_dict["annotations"]

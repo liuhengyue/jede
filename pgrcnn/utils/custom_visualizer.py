@@ -213,9 +213,10 @@ class JerseyNumberVisualizer(Visualizer):
         self.cpu_device = torch.device("cpu")
 
         # too small texts are useless, therefore clamp to 9
-        self._default_font_size = max(
-            np.sqrt(self.output.height * self.output.width) / (nrows * ncols) // 90, 10 // scale
-        )
+        # self._default_font_size = max(
+        #     np.sqrt(self.output.height * self.output.width) / (nrows * ncols) // 90, 10 // scale
+        # )
+        self._default_font_size = 5
         self._instance_mode = instance_mode
         self.digit_only = digit_only
 
@@ -548,7 +549,7 @@ class JerseyNumberVisualizer(Visualizer):
             # draw keypoint
             x, y, prob = keypoint
             if prob > _KEYPOINT_THRESHOLD:
-                self.draw_circle((x, y), color=color)
+                self.draw_circle((x, y), radius=self._default_font_size // 2 + 1, color=color)
                 if keypoint_names:
                     keypoint_name = keypoint_names[idx]
                     visible[keypoint_name] = (x, y)

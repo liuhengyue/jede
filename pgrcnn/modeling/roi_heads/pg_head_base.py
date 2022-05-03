@@ -37,6 +37,7 @@ class BasePGROIHeads(BaseROIHeads):
     def __init__(self,
                  *,
                  neck_base: Optional[nn.Module] = None,
+                 player_box_pooler: Optional[ROIPooler] = None,
                  neck_digit_output: Optional[nn.Module] = None,
                  digit_box_pooler: Optional[ROIPooler] = None,
                  digit_box_head: Optional[nn.Module] = None,
@@ -53,6 +54,7 @@ class BasePGROIHeads(BaseROIHeads):
         if self.neck_base is not None:
             self.use_person_features = self.neck_base.use_person_features
             self.use_kpts_features = self.neck_base.use_kpts_features
+        self.player_box_pooler = player_box_pooler
         self.neck_digit_output = neck_digit_output
         self.digit_box_pooler = digit_box_pooler
         self.digit_box_head = digit_box_head
@@ -106,8 +108,22 @@ class BasePGROIHeads(BaseROIHeads):
             ret["neck_base"] = None
             return ret
         in_features = cfg.MODEL.ROI_HEADS.IN_FEATURES
-        # default is 14x14
-        pooler_resolution = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION
+        # add a player pooler, default is 14x14
+        pooler_resolution = cfg.MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.POOLER_RESOLUTION
+        pooler_scales = tuple(1.0 / input_shape[k].stride for k in in_features)
+        sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type = cfg.MODEL.ROI_DIGIT_BOX_HEAD.POOLER_TYPE
+        player_box_pooler = (
+            ROIPooler(
+                output_size=pooler_resolution,
+                scales=pooler_scales,
+                sampling_ratio=sampling_ratio,
+                pooler_type=pooler_type,
+            )
+            if pooler_type
+            else None
+        )
+        ret["player_box_pooler"] = player_box_pooler
         in_channels = [input_shape[f].channels for f in in_features]
         # Check all channel counts are equal
         assert len(set(in_channels)) == 1, in_channels
@@ -118,7 +134,11 @@ class BasePGROIHeads(BaseROIHeads):
         # and keypoint heatmaps of K x 56 x 56,
         # where K could be 4 or 17 depending on
         K = cfg.MODEL.ROI_KEYPOINT_HEAD.NUM_KEYPOINTS if cfg.DATASETS.PAD_TO_FULL else cfg.DATASETS.NUM_KEYPOINTS
-        out_size = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION * 4
+        kernel_size, stride, padding = cfg.MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.CONV_SPECS
+        kpts_size = cfg.MODEL.ROI_KEYPOINT_HEAD.POOLER_RESOLUTION * 4
+        conv_out_size = (kpts_size - kernel_size + 2 * padding) // stride + 1
+        up_scale = max(1, cfg.MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.DECONV_KERNEL // 2) * cfg.MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.UP_SCALE
+        out_size = conv_out_size * up_scale
         # construct the input shapes, in the order of keypoint heatmap, then person box features
         input_shapes = {
             "keypoint_heatmap_shape": ShapeSpec(channels=K, height=out_size, width=out_size),
@@ -258,10 +278,10 @@ class BasePGROIHeads(BaseROIHeads):
             # we pool the features again for convenience
             # 14 x 14 pooler
             if self.training:
-                person_features = self.keypoint_pooler(features, [x.proposal_boxes if x.has("proposal_boxes")
+                person_features = self.player_box_pooler(features, [x.proposal_boxes if x.has("proposal_boxes")
                                                                   else Boxes([]).to(features[0].device) for x in instances])
             else:
-                person_features = self.keypoint_pooler(features, [x.pred_boxes for x in instances])
+                person_features = self.player_box_pooler(features, [x.pred_boxes for x in instances])
         else:
             person_features = None
 

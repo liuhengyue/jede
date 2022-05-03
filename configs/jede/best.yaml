@@ -1,0 +1,74 @@
+_BASE_: "../pg_rcnn/pg_rcnn_base.yaml"
+MODEL:
+#  BACKBONE:
+#    FREEZE_AT: 0
+#  RESNETS:
+#    NORM: "SyncBN"
+  WEIGHTS: "output/jede_best/train_with_all/model_final.pth"
+  ANCHOR_GENERATOR:
+    SIZES: [ [ 64 ], [ 128 ], [ 256 ], [ 512 ] ]
+  FPN:
+    IN_FEATURES: [ "res2", "res3", "res4", "res5" ]
+  RPN:
+    IN_FEATURES: [ "p3", "p4", "p5", "p6" ]
+    PRE_NMS_TOPK_TRAIN: 1000  # Per FPN level
+    POST_NMS_TOPK_TRAIN: 500
+  ROI_HEADS:
+    NAME: PGROIHeads
+    PROPOSAL_APPEND_GT: True
+    ENABLE_POSE_GUIDE: True
+    BATCH_SIZE_PER_IMAGE: 64
+  ROI_DIGIT_BOX_HEAD:
+    POOLER_RESOLUTION: 28
+  ROI_DIGIT_NECK_OUTPUT:
+    NORM: "GN"
+    MIN_OVERLAP: 0.1
+    OUTPUT_HEAD_CHANNELS: (2, 2, 2)
+    CONV_DIM: 256
+    NUM_DIGITS_CLASSIFIER_ON: 2
+  ROI_NECK_BASE_BRANCHES:
+    NORM: "GN"
+    PERSON_BRANCH:
+      NAME: "PersonROIBranch"
+      POOLER_RESOLUTION: 28
+      UP_SCALE: 1
+      DECONV_KERNEL: 1
+    KEYPOINTS_BRANCH:
+      NAME: "KptsROIBranch" # "KptsROIBranch"
+      DECONV_KERNEL: 1
+      UP_SCALE: 2
+      CONV_SPECS: [3,2,1]
+      PE: True
+  ROI_NECK_BASE:
+    BATCH_DIGIT_SIZE_PER_IMAGE: 256
+    NUM_PROPOSAL_TRAIN: 100
+DATASETS:
+  TRAIN: ("jerseynumbers_train", "keypoints_coco_2017_train")
+  TRAIN_VIDEO_IDS: [0,1,2,3,4]
+  TEST_VIDEO_IDS: [4]
+
+DATALOADER:
+  SAMPLER_TRAIN: WeightedTrainingSampler
+INPUT:
+  MAX_SIZE_TRAIN: 1589 #1333 + 256
+  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800, 832, 864, 896)
+#  MAX_SIZE_TEST: 1333
+#  MIN_SIZE_TEST: 800
+  MAX_SIZE_TEST: 2333
+  MIN_SIZE_TEST: 896
+  AUG:
+    HELPER_DATASET_NAME: svhn_train
+    COPY_PASTE_MIX: 10
+SOLVER:
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.0002
+  STEPS: (120000,)
+  MAX_ITER: 150000
+OUTPUT_DIR: ./output/jede_best/best
+
+#python train_net.py \
+#        --num-gpus 2 \
+#        --config-file configs/jede/best_model.yaml \
+#        DATASETS.TRAIN_VIDEO_IDS [0,1,3] \
+#        DATASETS.TEST_VIDEO_IDS [2] \
+#        OUTPUT_DIR ./output/jede_best/test_2

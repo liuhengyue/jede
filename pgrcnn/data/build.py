@@ -339,13 +339,15 @@ def get_detection_dataset_dicts(
                 pass
             # get the mapping from data index to the weight probability, and dataset source
             # record if the data can be applied with CopyPasteMix
-            has_jerseynumber = 'digit_bboxes' in dataset_dicts[i][0]['annotations'][0]
+            from_svhn = 'digit_bboxes' in dataset_dicts[i][0]['annotations'][0] and ('video_id' not in dataset_dicts[i][0])
             for j, dataset_dict in enumerate(dataset_dicts[i]):
                 data_id = start_ind + j
                 # video 4 (basketball should not be used for copypastemix)
-                applicables[data_id] = (has_jerseynumber and dataset_dict['video_id']!= 4, i)
+                from_cropped_player = 'video_id' in dataset_dict and dataset_dict['video_id'] != 4
+                valid = from_svhn or from_cropped_player
+                applicables[data_id] = (valid, i)
                 weights.append( 1 / (len(dataset_dicts) * len(dataset_dicts[i])) )
-                if has_jerseynumber:
+                if valid:
                     jerseynumber_inds[i].append(data_id)
             start_ind += len(dataset_dicts[i])
 
