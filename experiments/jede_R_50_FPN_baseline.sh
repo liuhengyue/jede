@@ -94,14 +94,14 @@ python train_net.py \
         INPUT.MIN_SIZE_TEST 960 \
         OUTPUT_DIR "./output/jede_R_50_FPN_baseline/test_4"
 
-#python train_net.py \
-#        --num-gpus 2 \
-#        --resume \
-#        --eval-only \
-#        --config-file configs/pg_rcnn/digit_twochannels/test_0_parallel_gn.yaml \
-#        DATASETS.TRAIN_VIDEO_IDS [4] \
-#        DATASETS.TEST_VIDEO_IDS [0,1,2,3] \
-#        INPUT.AUG.COPY_PASTE_MIX 0 \
-#        OUTPUT_DIR "./output/jede_R_50_FPN_baseline/test_5" \
-#        INPUT.MAX_SIZE_TEST 400 \
-#        INPUT.MIN_SIZE_TEST 240
+python train_net.py \
+        --num-gpus 2 \
+        --resume \
+        --eval-only \
+        --config-file configs/pg_rcnn/digit_twochannels/test_0_parallel_gn.yaml \
+        DATASETS.TRAIN_VIDEO_IDS [4] \
+        DATASETS.TEST_VIDEO_IDS [0,1,2,3] \
+        INPUT.AUG.COPY_PASTE_MIX 0 \
+        OUTPUT_DIR "./output/jede_R_50_FPN_baseline/test_5" \
+        INPUT.MAX_SIZE_TEST 400 \
+        INPUT.MIN_SIZE_TEST 240

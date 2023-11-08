@@ -76,3 +76,39 @@ python train_net.py \
         DATASETS.TEST_VIDEO_IDS [0,1,2,3] \
         INPUT.AUG.COPY_PASTE_MIX 0 \
         OUTPUT_DIR "./output/jede_R_50_FPN_best/test_5"
+
+# eval
+python train_net.py \
+        --num-gpus 2 \
+        --resume \
+        --eval-only \
+        --config-file configs/pg_rcnn/digit_twochannels/test_0_parallel_gn_pe_pretrain_copypastemix_swapdigit_less_anchors_unfreeze_b8.yaml \
+        MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.UP_SCALE 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.DECONV_KERNEL 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.UP_SCALE 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.DECONV_KERNEL 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.POOLER_RESOLUTION 56 \
+        MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.CONV_SPECS 3,1,1 \
+        DATASETS.TRAIN_VIDEO_IDS [0,1,2,3] \
+        DATASETS.TEST_VIDEO_IDS [4] \
+        OUTPUT_DIR "./output/jede_R_50_FPN_best/test_4"
+#        INPUT.MAX_SIZE_TEST 1600 \
+#        INPUT.MIN_SIZE_TEST 960 \
+
+python train_net.py \
+        --num-gpus 2\
+        --resume \
+        --eval-only \
+        --config-file configs/pg_rcnn/digit_twochannels/test_0_parallel_gn_pe_pretrain_copypastemix_swapdigit_less_anchors_unfreeze_b8.yaml \
+        MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.UP_SCALE 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.DECONV_KERNEL 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.UP_SCALE 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.DECONV_KERNEL 1 \
+        MODEL.ROI_NECK_BASE_BRANCHES.PERSON_BRANCH.POOLER_RESOLUTION 56 \
+        MODEL.ROI_NECK_BASE_BRANCHES.KEYPOINTS_BRANCH.CONV_SPECS 3,1,1 \
+        DATASETS.TRAIN_VIDEO_IDS [4] \
+        DATASETS.TEST_VIDEO_IDS [0,1,2,3] \
+        INPUT.AUG.COPY_PASTE_MIX 0 \
+        INPUT.MAX_SIZE_TEST 400 \
+        INPUT.MIN_SIZE_TEST 240 \
+        OUTPUT_DIR "./output/jede_R_50_FPN_best/test_5"

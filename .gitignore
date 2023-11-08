@@ -12,7 +12,7 @@ inference_test_output
 *.diff
 *.jpg
 !/projects/DensePose/doc/images/*.jpg
-
+!/JEDE.jpg
 # compilation and distribution
 __pycache__
 _ext

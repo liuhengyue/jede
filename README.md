@@ -1,4 +1,11 @@
-# Pose-guided R-CNN
+# JEDE: Universal Jersey Number Detector for Sports
+
+This codebase contains code for the paper "[JEDE: Universal Jersey Number Detector for Sports](https://hengyueliu.com/assets/files/JEDE_Universal_Jersey_Number_Detector_for_Sports.pdf)" published on IEEE TCSVT, 2022.
+
+<p align="center">
+<img src="JEDE.jpg" width=95% height=95% 
+class="center">
+</p>
 
 ## Installation
 
@@ -30,10 +37,16 @@ python -m pip install -e detectron2
 
 See [installation instructions](https://detectron2.readthedocs.io/tutorials/install.html) for more details on installing detectron2.
 
+## Weights
+
+The weights trained with all images across soccer and basketball videos can be found in the release.
+
 
 ## Dataset Preparation
 
 ### Prepare Jersey Number
+
+Currently, the dataset is not released due to policies. But, it will be released in the future.
 
 ```
 mkdir datasets/jnw
@@ -59,4 +72,20 @@ wget http://ufldl.stanford.edu/housenumbers/train.tar.gz
 mkdir svhn
 tar -xvzf train.tar.gz -C svhn
 rm train.tar.gz
+```
+
+## Citations
+
+If you find our work helpful, please cite:
+```bibtex
+@article{liu2022jede,
+  title={JEDE: Universal Jersey Number Detector for Sports},
+  author={Liu, Hengyue and Bhanu, Bir},
+  journal={IEEE Transactions on Circuits and Systems for Video Technology},
+  volume={32},
+  number={11},
+  pages={7894--7909},
+  year={2022},
+  publisher={IEEE}
+}
 ```
